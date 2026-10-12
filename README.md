@@ -9,6 +9,20 @@
 3. Выполнять этапы из [PLAN.md](PLAN.md) по одному, используя соответствующие файлы в [prompts](prompts/README.md).
 4. После каждого этапа проверять критерии приёмки, обновлять [STATUS.md](STATUS.md) и фиксировать результат отдельным git-коммитом.
 
+## Проверка среды
+
+Фактический снимок машины, целевые версии и известные расхождения описаны в [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md). Preflight ничего не устанавливает и не читает секреты:
+
+```powershell
+./scripts/preflight.ps1
+```
+
+```bash
+./scripts/preflight.sh
+```
+
+Ненулевой exit code означает проблему обязательного core toolchain. NVIDIA GPU и контейнерный passthrough относятся к optional `local-llm` и дают только предупреждение.
+
 Первый запрос для новой сессии Codex находится в [prompts/00-preflight.md](prompts/00-preflight.md). Для автономного длинного запуска предназначен [MASTER_PROMPT.md](MASTER_PROMPT.md), но поэтапный режим проще контролировать и дешевле исправлять.
 
 ## Зафиксированный стек

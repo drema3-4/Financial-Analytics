@@ -42,3 +42,32 @@
 
 **Почему:** воспроизводимая среда и корректные package metadata — разные задачи. Lockfile и контейнер фиксируют фактическую сборку.
 
+## ADR-008: воспроизводимый baseline toolchain и container images
+
+**Дата:** 2026-10-13.
+
+**Решение:** зафиксировать следующие версии для этапов bootstrap и локальной разработки:
+
+| Компонент | Зафиксированная версия |
+|---|---|
+| Node.js | `24.21.0` (LTS) |
+| pnpm | `12.12.1` |
+| Python | `3.12.12` согласно ADR-007 |
+| Poetry | `2.5.1` |
+| PostgreSQL | `18.6` |
+
+Базовые container images фиксируются полным тегом и multi-platform manifest digest:
+
+```text
+python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c
+node:24.21.0-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
+nvidia/cuda:12.8.1-base-ubuntu24.04@sha256:133c78a0575303be34164d0b90137a042172bdf60696af01a3c424ab402d86e2
+```
+
+CUDA image используется только для диагностики GPU, не как образ приложения. Версия vLLM image и модели намеренно не утверждаются на этапе 00: их фиксация требует профильного smoke-test на этапе 09.
+
+**Почему:** Node 24 находится в LTS, pnpm 12 официально совместим с Node 24, Poetry 2.5.1 является стабильным patch, а PostgreSQL 18.6 — текущим поддерживаемым minor линии 18 на дату решения. Debian Bookworm даёт общий glibc baseline для Python, Node и PostgreSQL. Digest защищает сборку от незаметного перемещения тега; обновление digest выполняется отдельным осознанным изменением с повторной проверкой.
+
+Python 3.12.12 сохранён из исходного требования, хотя на дату решения он уже заменён более новым security patch и не имеет официального Windows installer. Это известное ограничение: разработчик использует официальный source release через доверенный version manager/WSL2 или закреплённый Linux image, а изменение версии требует нового ADR.
+

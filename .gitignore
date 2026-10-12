@@ -1,0 +1,50 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+htmlcov/
+
+# Node and frontend tooling
+node_modules/
+.pnpm-store/
+coverage/
+dist/
+.vite/
+playwright-report/
+test-results/
+
+# Local databases and runtime state
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+data/
+
+# Models and generated artifacts
+models/
+*.gguf
+*.onnx
+*.safetensors
+generated-reports/
+
+# IDE and operating system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+tmp/
