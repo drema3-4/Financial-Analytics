@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.12"
+      - name: Install Poetry
+        run: pipx install poetry==2.5.1
+      - name: Install backend dependencies
+        run: poetry install --no-interaction
+      - name: Validate lock and package metadata
+        run: poetry check --lock
+      - name: Ruff lint
+        run: poetry run ruff check .
+      - name: Ruff formatting
+        run: poetry run ruff format --check .
+      - name: Mypy
+        run: poetry run mypy
+      - name: Pytest with coverage
+        run: poetry run pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24.21.0"
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@12.12.1
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: ESLint
+        run: pnpm lint
+      - name: Formatting
+        run: pnpm format:check
+      - name: TypeScript
+        run: pnpm typecheck
+      - name: Vitest with coverage
+        run: pnpm test
+      - name: Production build
+        run: pnpm build
+
+  migration-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
+        env:
+          POSTGRES_DB: financial_analytics
+          POSTGRES_PASSWORD: migration_test_password
+          POSTGRES_USER: financial_analytics
+        options: >-
+          --health-cmd "pg_isready -U financial_analytics -d financial_analytics"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+        ports:
+          - 5432:5432
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql+psycopg://financial_analytics:migration_test_password@localhost:5432/financial_analytics
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.12"
+      - name: Install Poetry
+        run: pipx install poetry==2.5.1
+      - name: Install backend dependencies
+        run: poetry install --no-interaction
+      - name: Upgrade a clean database
+        run: poetry run alembic upgrade head
+      - name: Assert the baseline is current
+        run: poetry run alembic current --check-heads
+      - name: Assert metadata has no pending migration
+        run: poetry run alembic check
+
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate Compose model
+        run: docker compose config --quiet

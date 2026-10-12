@@ -14,10 +14,13 @@ __pycache__/
 .ruff_cache/
 .venv/
 htmlcov/
+.coverage
+.coverage.*
 
 # Node and frontend tooling
 node_modules/
 .pnpm-store/
+*.tsbuildinfo
 coverage/
 dist/
 .vite/

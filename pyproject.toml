@@ -1,0 +1,66 @@
+[project]
+name = "financial-analytics"
+version = "0.1.0"
+description = "Local-first personal finance application"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "alembic>=1.14,<2",
+    "fastapi>=0.115,<1",
+    "pydantic-settings>=2.7,<3",
+    "psycopg[binary]>=3.2,<4",
+    "sqlalchemy>=2.0,<3",
+    "uvicorn[standard]>=0.34,<1",
+]
+
+[project.scripts]
+financial-analytics-api = "financial_analytics_api.__main__:main"
+financial-analytics-worker = "financial_analytics_worker.__main__:main"
+
+[tool.poetry]
+package-mode = true
+packages = [
+    { include = "financial_analytics_api", from = "apps/api/src" },
+    { include = "financial_analytics_worker", from = "apps/worker/src" },
+    { include = "financial_analytics_domain", from = "packages/backend/domain/src" },
+    { include = "financial_analytics_app", from = "packages/backend/app/src" },
+    { include = "financial_analytics_infra", from = "packages/backend/infra/src" },
+]
+
+[tool.poetry.group.dev.dependencies]
+httpx2 = ">=2.13,<3"
+mypy = ">=1.14,<2"
+pytest = ">=8.3,<10"
+pytest-cov = ">=6,<8"
+ruff = ">=0.9,<1"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = [
+    "apps/api/src",
+    "apps/worker/src",
+    "packages/backend/app/src",
+    "packages/backend/domain/src",
+    "packages/backend/infra/src",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["apps", "packages/backend", "tests"]
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers --cov=financial_analytics_api --cov=financial_analytics_worker --cov=financial_analytics_app --cov=financial_analytics_domain --cov=financial_analytics_infra --cov-branch --cov-report=term-missing --cov-fail-under=85"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core>=2.0,<3"]
+build-backend = "poetry.core.masonry.api"

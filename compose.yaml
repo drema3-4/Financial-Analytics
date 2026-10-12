@@ -1,0 +1,111 @@
+name: financial-analytics
+
+x-backend-environment: &backend-environment
+  APP_ENV: development
+  CORS_ORIGINS: '["http://localhost:4173"]'
+  DATABASE_URL: postgresql+psycopg://financial_analytics:${POSTGRES_PASSWORD:-financial_analytics_dev}@postgres:5432/financial_analytics
+  LOG_LEVEL: INFO
+
+x-backend: &backend
+  image: financial-analytics-backend:01
+  environment: *backend-environment
+  init: true
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  postgres:
+    image: postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
+    environment:
+      POSTGRES_DB: financial_analytics
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-financial_analytics_dev}
+      POSTGRES_USER: financial_analytics
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U financial_analytics -d financial_analytics"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - postgres_data:/var/lib/postgresql
+
+  migrate:
+    <<: *backend
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *backend
+    build:
+      context: .
+      dockerfile: infra/docker/backend/Dockerfile
+    command: ["python", "-m", "financial_analytics_api"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    ports:
+      - "8000:8000"
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "financial_analytics_worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-m", "financial_analytics_worker", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  web:
+    image: financial-analytics-web:01
+    build:
+      context: .
+      dockerfile: infra/docker/web/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4173/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+    init: true
+    ports:
+      - "4173:4173"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres_data:

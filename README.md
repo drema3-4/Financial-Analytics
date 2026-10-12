@@ -1,51 +1,189 @@
 # Financial Analytics
 
-Локальное веб-приложение для учёта личных финансов, прогнозирования, целей и объяснимых советов LLM. Этот репозиторий пока содержит не сгенерированное «наугад» приложение, а полный комплект исходных требований и промптов, по которым Codex может последовательно построить и проверить продукт.
+Local-first приложение для учёта личных финансов. Этап 01 содержит запускаемый каркас без
+финансовых бизнес-функций: FastAPI API, отдельный worker, React/Vite web и PostgreSQL.
 
-## С чего начать
+Источники требований: [SPEC.md](SPEC.md), [PLAN.md](PLAN.md) и
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-1. Прочитать [SPEC.md](SPEC.md) — что именно строим и что не строим.
-2. Прочитать [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — как разделены расчёты, данные, LLM и интерфейс.
-3. Выполнять этапы из [PLAN.md](PLAN.md) по одному, используя соответствующие файлы в [prompts](prompts/README.md).
-4. После каждого этапа проверять критерии приёмки, обновлять [STATUS.md](STATUS.md) и фиксировать результат отдельным git-коммитом.
+## Быстрый запуск core stack
 
-## Проверка среды
+Нужны Docker Engine / Docker Desktop с Compose v2. На Windows должен использоваться Docker
+Desktop с WSL2 backend и Linux containers.
 
-Фактический снимок машины, целевые версии и известные расхождения описаны в [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md). Preflight ничего не устанавливает и не читает секреты:
+Из корня репозитория на Windows PowerShell, в WSL2 или Linux выполните одну команду:
+
+```text
+docker compose up --build --wait
+```
+
+Команда собирает закреплённые Python/Node images, запускает PostgreSQL, применяет Alembic
+baseline и ждёт healthchecks API, worker и web. LLM не входит в core stack и не влияет на
+startup. Для zero-config локального запуска Compose использует пароль
+`financial_analytics_dev`; PostgreSQL не публикуется на host. Это только development default.
+Чтобы задать свой пароль до первого запуска, создайте `.env` из `.env.example` и замените
+placeholder.
+
+После запуска доступны:
+
+- web: <http://localhost:4173>;
+- API docs: <http://localhost:8000/docs>;
+- liveness: <http://localhost:8000/health/live>;
+- readiness: <http://localhost:8000/health/ready>.
+
+`/health/live` сообщает о работе процесса. `/health/ready` возвращает `200` только после
+успешного `SELECT 1` в PostgreSQL; при недоступности БД API продолжает стартовать и возвращает
+единый `503 application/problem+json`.
+
+Статус и логи:
+
+```text
+docker compose ps
+docker compose logs --no-color api worker web postgres
+```
+
+Остановить stack, сохранив данные в named volume:
+
+```text
+docker compose down
+```
+
+Удаление volume выполняется только осознанно командой `docker compose down --volumes`: она
+безвозвратно удаляет локальную БД.
+
+## Закреплённый toolchain
+
+- Python `3.12.12`, Poetry `2.5.1`;
+- Node.js `24.21.0`, pnpm `12.12.1`;
+- PostgreSQL `18.6`;
+- container tags и multi-platform digests зафиксированы в Dockerfiles и `compose.yaml`;
+- Python и frontend dependency graph зафиксированы в `poetry.lock` и `pnpm-lock.yaml`.
+
+Проверить host environment:
 
 ```powershell
-./scripts/preflight.ps1
+./scripts/preflight.ps1 -SkipGpuContainer
 ```
 
 ```bash
-./scripts/preflight.sh
+./scripts/preflight.sh --skip-gpu-container
 ```
 
-Ненулевой exit code означает проблему обязательного core toolchain. NVIDIA GPU и контейнерный passthrough относятся к optional `local-llm` и дают только предупреждение.
+Подробности установки версий и ограничения Windows описаны в
+[docs/ENVIRONMENT.md](docs/ENVIRONMENT.md). Python 3.12.12 не имеет официального Windows
+installer, поэтому для этой версии используйте доверенный version manager или WSL2, либо
+выполняйте проверки в закреплённом backend image.
 
-Первый запрос для новой сессии Codex находится в [prompts/00-preflight.md](prompts/00-preflight.md). Для автономного длинного запуска предназначен [MASTER_PROMPT.md](MASTER_PROMPT.md), но поэтапный режим проще контролировать и дешевле исправлять.
+## Backend: локальная разработка
 
-## Зафиксированный стек
+Команды одинаковы в PowerShell, WSL2 и Linux после выбора Python `3.12.12`:
 
-- Backend: Python 3.12.12, Poetry, FastAPI, SQLAlchemy 2, Alembic, PostgreSQL.
-- Frontend: React, TypeScript, Vite, pnpm.
-- Фоновые задания: отдельный worker с PostgreSQL-backed очередью; без обязательного Redis в MVP.
-- LLM: провайдер через OpenAI-compatible API; локальный профиль — vLLM в Linux-контейнере с 4-битной моделью.
-- Локальный запуск: Docker Compose, с отдельными профилями `core`, `local-llm` и `mail`.
-- Качество: pytest, mypy, Ruff, Vitest, Testing Library, Playwright, ESLint, TypeScript strict.
+```text
+poetry env use 3.12.12
+poetry install --no-interaction
+poetry check --lock
+poetry run ruff check .
+poetry run ruff format --check .
+poetry run mypy
+poetry run pytest
+```
 
-## Важные ограничения
+Локальный API использует `DATABASE_URL` из environment или `.env`. Запуск:
 
-- Балансы, проценты, прогнозы и достижимость целей считает детерминированный код, а не LLM.
-- Денежные операции не удаляются бесследно: исправление выполняется сторнирующей/корректирующей записью, а действия аудируются.
-- На Windows vLLM запускается через Docker Desktop/WSL2; нативный Windows не является целевой средой.
-- RTX 3050 6 ГБ — жёсткое ограничение: стартовый локальный профиль использует 4-битную модель класса 3–4B и короткий контекст. Фактическая совместимость подтверждается smoke-тестом на целевой машине.
+```text
+poetry run financial-analytics-api
+```
 
-## Материалы
+Worker:
 
-- [Исследование и источники](docs/RESEARCH.md)
-- [Архитектура](docs/ARCHITECTURE.md)
-- [Решения и допущения](docs/DECISIONS.md)
-- [План разработки](PLAN.md)
-- [Пакет этапных промптов](prompts/README.md)
+```text
+poetry run financial-analytics-worker
+```
 
+Применить и проверить миграции при доступном PostgreSQL:
+
+PowerShell:
+
+```powershell
+$env:DATABASE_URL = "postgresql+psycopg://financial_analytics:financial_analytics_dev@localhost:5432/financial_analytics"
+poetry run alembic upgrade head
+poetry run alembic current --check-heads
+poetry run alembic check
+```
+
+WSL2 / Linux:
+
+```bash
+export DATABASE_URL="postgresql+psycopg://financial_analytics:financial_analytics_dev@localhost:5432/financial_analytics"
+poetry run alembic upgrade head
+poetry run alembic current --check-heads
+poetry run alembic check
+```
+
+По умолчанию Compose PostgreSQL не публикует порт на host. Для host Poetry-команд временно
+добавьте `ports: ["5432:5432"]` через локальный Compose override; не коммитьте такой override
+для публичного развёртывания. Без override миграции проверяются внутри сети Compose:
+
+```text
+docker compose run --rm migrate python -m alembic current --check-heads
+```
+
+## Frontend: локальная разработка
+
+Активируйте ровно зафиксированный pnpm через Corepack:
+
+```text
+corepack enable
+corepack prepare pnpm@12.12.1 --activate
+pnpm install --frozen-lockfile
+```
+
+Quality gate:
+
+```text
+pnpm lint
+pnpm format:check
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+Development server:
+
+```text
+pnpm --filter @financial-analytics/web exec vite --host 127.0.0.1
+```
+
+По умолчанию web обращается к `http://localhost:8000`. Другой адрес задаётся через
+`VITE_API_BASE_URL` до build/start.
+
+## Compose и migration smoke
+
+Проверка Compose без запуска сервисов:
+
+```text
+docker compose config --quiet
+```
+
+Baseline не создаёт доменных таблиц. `migrate` создаёт только служебную таблицу
+`alembic_version` и фиксирует revision `20261013_0001`. CI проверяет upgrade на отдельной
+чистой PostgreSQL service database и отсутствие расхождений metadata/migrations.
+
+## Структура
+
+```text
+apps/api/                    FastAPI composition root и HTTP contracts
+apps/worker/                 отдельный background process
+apps/web/                    React / TypeScript / Vite SPA
+packages/backend/domain/     framework-independent domain boundary
+packages/backend/app/        use cases and ports boundary
+packages/backend/infra/      settings и database adapters
+packages/frontend/api/       общие TypeScript API contracts
+tests/unit/                  backend unit/component tests
+tests/contract/              OpenAPI contract tests
+infra/docker/                non-root runtime images
+migrations/                  Alembic environment и revisions
+```
+
+Формат health/error API и заголовки трассировки описаны в
+[docs/API.md](docs/API.md). Текущий gate — в [STATUS.md](STATUS.md).
