@@ -127,3 +127,29 @@ def test_openapi_documents_deposit_terms_exact_rates_and_valuation() -> None:
     valuation = schema["paths"]["/api/v1/deposits/{deposit_id}/valuation"]["get"]
     as_of = next(item for item in valuation["parameters"] if item["name"] == "as_of")
     assert as_of["required"] is True
+
+
+def test_openapi_documents_reconciled_analytics_contracts() -> None:
+    settings = Settings(app_env=AppEnvironment.TEST, _env_file=None)
+    schema = create_app(settings).openapi()
+    assert {
+        "/api/v1/analytics/dashboard",
+        "/api/v1/reports/financial",
+    } <= schema["paths"].keys()
+    dashboard = schema["paths"]["/api/v1/analytics/dashboard"]["get"]
+    report = schema["paths"]["/api/v1/reports/financial"]["get"]
+    assert dashboard["operationId"] == "getAnalyticsDashboard"
+    assert report["operationId"] == "getFinancialReport"
+    report_parameters = {item["name"]: item for item in report["parameters"]}
+    assert report_parameters["period_start"]["required"] is True
+    assert report_parameters["period_end"]["required"] is True
+    assert report_parameters["granularity"]["schema"]["$ref"].endswith("/PeriodGranularity")
+    assert set(schema["components"]["schemas"]["PeriodGranularity"]["enum"]) == {
+        "day",
+        "week",
+        "month",
+    }
+    money_metric = schema["components"]["schemas"]["MoneyMetricResponse"]
+    assert {"value", "formula", "evidence"} <= set(money_metric["required"])
+    category = schema["components"]["schemas"]["CategoryResponse"]
+    assert "is_mandatory" in category["required"]

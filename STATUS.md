@@ -4,14 +4,51 @@
 
 ## Текущее состояние
 
-- Стадия: завершён `06 — Deposits`; эталонные таблицы и PostgreSQL gate зелёные.
-- Реализация: immutable deposit terms/rate periods, pure Decimal interest engine, linked ledger
-  cashflows/interest facts, valuation/schedule/effective-yield/reconciliation API доступны под
-  `/api/v1/deposits`; revision `20261013_0008` применена.
-- Следующий этап: `07 — Analytics`; не начат и требует отдельного явного запроса.
+- Стадия: завершён `07 — Analytics`; reconciliation, query-plan и PostgreSQL gates зелёные.
+- Реализация: owner-scoped read model строит explainable cash flow, income/expense,
+  category/group breakdown, net worth, mandatory share, savings rate, period comparison и
+  deterministic anomalies; dashboard/report API доступны под `/api/v1`, revision
+  `20261013_0009` применена.
+- Следующий этап: `08 — Forecast & Goals`; не начат и требует отдельного явного запроса.
 - Host global toolchain из снимка этапа 00 всё ещё может отличаться от baseline; repository
   gate подтверждён в Python 3.12.12 environment, pnpm 12.12.1 и закреплённых containers.
 - LLM не входит в core startup; local-vLLM остаётся задачей этапа 09.
+
+## Готово в этапе 07
+
+- Чистый analytics calculator восстанавливает каждый показатель из immutable asset postings.
+  Income/expense/interest дают внешний cash flow, transfer нейтрален, adjustment влияет только
+  на net worth, reversal в свою дату даёт противоположный вклад вида/категории оригинала.
+- Каждый money/rate metric публикует формулу, exact decimal inputs и evidence с transaction и
+  posting UUID. Category/group breakdown разделён по `flow_type` и точно сходится с totals.
+- `categories.is_mandatory` имеет DB constraint `expense only`; mandatory share и savings rate
+  возвращают `null` при неположительном denominator вместо выдуманного значения.
+- Валюты агрегируются только отдельно. При нескольких валютах contract возвращает
+  `currency_mode=separated_by_currency` и `combined_currency=null`; FX без сохранённых
+  rate/source не выполняется.
+- Day/ISO-week/month boundaries строятся из IANA timezone profile, переводятся в UTC и остаются
+  полуоткрытыми. Пустые buckets имеют zero; текущий bucket помечается incomplete и обрезается
+  `data_through`, а comparison использует тот же local elapsed cut предыдущего диапазона.
+- Anomaly policy `median-mad-v1` сравнивает завершённый bucket с median/MAD шести предыдущих,
+  возвращает rationale, baseline, signed deviation, threshold и evidence; LLM не участвует.
+- `GET /api/v1/analytics/dashboard` и `GET /api/v1/reports/financial` закреплены в OpenAPI и
+  generated TypeScript client. Ответ не содержит profile/description и подготовлен как основа
+  будущего sanitized AdviceContext.
+- ADR-016 и `docs/ANALYTICS.md` фиксируют формулы, transfers/reversals, open/empty/mixed-currency
+  semantics, comparison/anomaly policy и measurement-first performance budget.
+
+## Проверки этапа 07
+
+- Backend: Ruff lint/format, strict mypy, generated OpenAPI/client drift — зелёные; `82 passed`,
+  total coverage `87.37%`.
+- PostgreSQL: clean upgrade/check/downgrade и metadata drift зелёные; API reconciliation,
+  mixed-currency contract, reversal/transfer semantics и cross-owner isolation проверены.
+- Synthetic performance gate: 10 000 transactions двух tenants; monthly owner/date plan
+  использует partial posted index без sequential scan или temp I/O, result rows `<= 200`,
+  application report выполняет `<= 5 SELECT`.
+- Frontend: ESLint, Prettier, TypeScript зелёные; `8 passed`, coverage `100%`, production build
+  зелёный. Compose backend/web пересобраны; PostgreSQL/API/worker/web healthy, Alembic
+  `20261013_0009`; оба analytics paths подтверждены runtime OpenAPI smoke-test.
 
 ## Готово в этапе 06
 
@@ -111,3 +148,4 @@
 | 04 Ledger API | завершён | `feat(04): expose idempotent ledger API` | 56 backend tests, generated client drift, 8 frontend tests, Compose |
 | 05 Scheduling | завершён | `feat(05): process recurring operations reliably` | 68 backend tests, 86.80%, worker concurrency/replay, 8 frontend tests, Compose |
 | 06 Deposits | завершён | `feat(06): model deposits and compound interest` | 75 backend tests, 86.61%, fixtures/property/integration/contract, 8 frontend tests, Compose |
+| 07 Analytics | завершён | `feat(07): provide reconciled financial analytics` | 82 backend tests, 87.37%, reconciliation/plan/integration/contract, 8 frontend tests, Compose |

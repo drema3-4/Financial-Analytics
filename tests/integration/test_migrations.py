@@ -40,6 +40,12 @@ def test_clean_upgrade_and_empty_schema_downgrade() -> None:
             "deposit_terms",
             "deposit_rate_periods",
         }.issubset(inspect(engine).get_table_names())
+        assert "is_mandatory" in {
+            column["name"] for column in inspect(engine).get_columns("categories")
+        }
+        assert "ix_transactions_owner_id_occurred_at_id_posted" in {
+            index["name"] for index in inspect(engine).get_indexes("transactions")
+        }
 
         command.downgrade(config, "20261013_0001")
         assert inspect(engine).get_table_names() == ["alembic_version"]

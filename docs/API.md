@@ -1,4 +1,4 @@
-# API contract through milestone 05
+# API contract through milestone 07
 
 FastAPI публикует актуальную OpenAPI-схему по `/openapi.json` и интерактивную документацию
 по `/docs`. Зафиксированный snapshot находится в `docs/openapi.json`; из него
@@ -118,6 +118,26 @@ Schedule — расчётный план и не создаёт postings. Cashfl
 `deposit_id`; банковский процент — отдельная transaction `interest`. Исправление выполняется
 reversal/новой posting, поэтому reconciliation меняется, но план и terms не переписываются.
 Полная семантика и формулы — в [DEPOSIT_CALCULATIONS.md](DEPOSIT_CALCULATIONS.md).
+
+## Analytics and reports
+
+Оба read endpoint требуют access cookie и используют timezone текущего profile. Money и rates
+возвращаются decimal strings; бинарных JSON numbers для финансовых значений нет.
+
+| Method | Path | Result |
+|---|---|---|
+| `GET` | `/analytics/dashboard` | totals, net worth, savings/mandatory rates, comparison и anomalies |
+| `GET` | `/reports/financial` | dashboard metrics плюс series и category/group breakdown |
+
+Параметры: `period_start`, `period_end` как local dates и
+`granularity=day|week|month`. Для dashboard обе даты optional вместе: без них возвращается
+текущий local bucket. Detailed report требует обе даты. Неделя начинается в понедельник,
+месяц — первого числа; невыровненные границы и диапазон дальше текущего bucket получают `422`.
+
+`currency_mode=separated_by_currency` и `combined_currency=null` гарантируют отсутствие
+скрытой суммы разных валют. Каждый metric имеет formula/evidence; detailed breakdown содержит
+`flow_type`, поэтому его строки сверяются с income/expense отдельно. Точные формулы, reversal,
+open-period comparison и anomaly thresholds описаны в [ANALYTICS.md](ANALYTICS.md).
 
 ### Пример account с opening balance
 

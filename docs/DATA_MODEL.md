@@ -1,6 +1,6 @@
 # Модель данных
 
-Этапы 02–06 реализуют double-entry ledger как единственный источник фактических остатков.
+Этапы 02–07 реализуют double-entry ledger как единственный источник фактических остатков.
 Проведённая операция неизменяема; исправление — новая reversal transaction с причинными
 ссылками. В таблицах нет доверенного «UI balance»: любой остаток перестраивается суммой
 `postings.amount`.
@@ -149,6 +149,10 @@ Finance включает `accounts`, `category_groups`, `categories`, `tags`, `t
 `idempotency_records`, `recurring_rules`, durable `outbox_jobs` и глобальную
 `schema_metadata`.
 
+`categories.is_mandatory` — явный boolean для обязательной доли расходов; DB constraint
+разрешает его только для expense category. Analytics не хранит totals: owner-scoped read model
+вычисляется из posted transactions/postings и возвращает исходные UUID как evidence.
+
 Deposits включает immutable `deposit_terms` и `deposit_rate_periods`. Производный план не
 дублируется в таблице: он воспроизводимо строится из versioned terms и deposit-linked transfer
 transactions. Фактические проценты — ledger transaction kind `interest`; `deposit_id` также
@@ -250,7 +254,7 @@ scope, составных owner FK и integration tests с двумя владе
 
 ## Миграции и downgrade
 
-`20261013_0008` применяется на чистую БД и проверяется `alembic check`. Downgrade до
+`20261013_0009` применяется на чистую БД и проверяется `alembic check`. Downgrade до
 `20261013_0001` удаляет финансовую схему и поэтому тестируется только на пустой disposable
 database. Для БД с реальными данными такой downgrade разрушителен и не является рабочей
 процедурой отката; используется forward fix/backup restore.

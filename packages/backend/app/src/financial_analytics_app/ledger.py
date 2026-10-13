@@ -232,6 +232,7 @@ class LedgerService:
         name: str,
         kind: CategoryKind,
         group_id: UUID | None,
+        is_mandatory: bool,
         idempotency_key: str,
         request_hash: str,
         request_id: UUID | None,
@@ -251,6 +252,7 @@ class LedgerService:
                 name=name.strip(),
                 kind=kind,
                 group_id=group_id,
+                is_mandatory=is_mandatory,
             )
             uow.ledger.add_category(category)
             self._audit(

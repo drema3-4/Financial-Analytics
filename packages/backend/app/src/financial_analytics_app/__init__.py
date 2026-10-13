@@ -1,5 +1,6 @@
 """Application use cases and persistence ports."""
 
+from financial_analytics_app.analytics import AnalyticsService
 from financial_analytics_app.deposits import (
     DepositService,
     DepositValuation,
@@ -37,6 +38,7 @@ from financial_analytics_app.services import (
 __all__ = [
     "AuditEvent",
     "AccountWithBalance",
+    "AnalyticsService",
     "ConcurrentModificationError",
     "DepositRepository",
     "DepositService",

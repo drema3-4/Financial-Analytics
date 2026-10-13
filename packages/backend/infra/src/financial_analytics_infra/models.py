@@ -365,6 +365,7 @@ class CategoryModel(Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint("kind IN ('income', 'expense')", name="category_kind"),
+        CheckConstraint("NOT is_mandatory OR kind = 'expense'", name="category_mandatory_expense"),
         CheckConstraint("char_length(btrim(name)) > 0", name="category_name"),
         CheckConstraint("version > 0", name="category_version"),
         Index("ix_categories_owner_id_kind", "owner_id", "kind"),
@@ -377,6 +378,9 @@ class CategoryModel(Base):
     group_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    is_mandatory: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
@@ -469,6 +473,13 @@ class TransactionModel(Base):
             "owner_id",
             "occurred_at",
             "id",
+        ),
+        Index(
+            "ix_transactions_owner_id_occurred_at_id_posted",
+            "owner_id",
+            "occurred_at",
+            "id",
+            postgresql_where=text("status = 'posted'"),
         ),
     )
 

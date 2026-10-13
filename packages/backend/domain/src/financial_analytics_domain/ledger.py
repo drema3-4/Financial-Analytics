@@ -82,11 +82,14 @@ class Category:
     name: str
     kind: CategoryKind
     group_id: UUID | None = None
+    is_mandatory: bool = False
     version: int = 1
 
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise DomainError("category name must not be empty")
+        if self.kind is CategoryKind.INCOME and self.is_mandatory:
+            raise DomainError("only expense categories can be mandatory")
 
 
 @dataclass(frozen=True, slots=True)

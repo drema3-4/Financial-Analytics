@@ -20,12 +20,50 @@ export type AdjustmentRequest = {
   tag_ids?: Array<string>;
 };
 
+export type AnomalyFlagResponse = {
+  bucket_start: string;
+  bucket_end: string;
+  metric: string;
+  direction: string;
+  observed: MoneyResponse;
+  baseline: MoneyResponse;
+  deviation: MoneyResponse;
+  threshold: MoneyResponse;
+  rationale: string;
+  baseline_bucket_count: number;
+  evidence: EvidenceResponse;
+};
+
+export type AnomalyPolicyResponse = {
+  version: string;
+  baseline_buckets: number;
+  minimum_buckets: number;
+  baseline_statistic: string;
+  threshold_formula: string;
+  incomplete_buckets_evaluated: boolean;
+};
+
 export type BootstrapRequest = {
   email: string;
   password: string;
   base_currency: string;
   locale?: string;
   timezone: string;
+};
+
+export type BreakdownItemResponse = {
+  flow_type: string;
+  id: (string) | (null);
+  name: string;
+  amount: MoneyResponse;
+  evidence: EvidenceResponse;
+};
+
+export type BucketResponse = {
+  start: string;
+  end: string;
+  is_complete: boolean;
+  currencies: Array<ReportCurrencyResponse>;
 };
 
 export type CapitalizationFrequency = "daily" | "monthly_calendar_end";
@@ -47,7 +85,15 @@ export type CategoryResponse = {
   name: string;
   kind: CategoryKind;
   group_id: (string) | (null);
+  is_mandatory: boolean;
   version: number;
+};
+
+export type ComparisonMetricResponse = {
+  current: MoneyResponse;
+  previous: MoneyResponse;
+  delta: MoneyResponse;
+  change_rate: (string) | (null);
 };
 
 export type CreateAccountRequest = {
@@ -67,6 +113,7 @@ export type CreateCategoryRequest = {
   name: string;
   kind: CategoryKind;
   group_id?: (string) | (null);
+  is_mandatory?: boolean;
 };
 
 export type CreateDepositRequest = {
@@ -99,6 +146,40 @@ export type CreateRecurringRuleRequest = {
 
 export type CreateTagRequest = {
   name: string;
+};
+
+export type CurrencyComparisonResponse = {
+  currency: string;
+  income: ComparisonMetricResponse;
+  expense: ComparisonMetricResponse;
+  cash_flow: ComparisonMetricResponse;
+  savings: ComparisonMetricResponse;
+  net_worth: ComparisonMetricResponse;
+};
+
+export type DashboardCurrencyResponse = {
+  currency: string;
+  income: MoneyMetricResponse;
+  expense: MoneyMetricResponse;
+  cash_flow: MoneyMetricResponse;
+  savings: MoneyMetricResponse;
+  mandatory_expense: MoneyMetricResponse;
+  mandatory_expense_share: RatioMetricResponse;
+  savings_rate: RatioMetricResponse;
+  opening_net_worth: MoneyMetricResponse;
+  closing_net_worth: MoneyMetricResponse;
+  net_worth_change: MoneyMetricResponse;
+};
+
+export type DashboardResponse = {
+  period: PeriodResponse;
+  data_through: string;
+  currency_mode: string;
+  combined_currency: (string) | (null);
+  totals: Array<DashboardCurrencyResponse>;
+  comparison: PeriodComparisonResponse;
+  anomaly_policy: AnomalyPolicyResponse;
+  anomalies: Array<AnomalyFlagResponse>;
 };
 
 export type DayCountConvention = "actual_365_fixed" | "actual_actual_isda";
@@ -170,6 +251,23 @@ export type EarlyCloseRuleResponse = {
   nominal_rate: (string) | (null);
 };
 
+export type EvidenceResponse = {
+  transaction_ids: Array<string>;
+  posting_ids: Array<string>;
+};
+
+export type FinancialReportResponse = {
+  period: PeriodResponse;
+  data_through: string;
+  currency_mode: string;
+  combined_currency: (string) | (null);
+  totals: Array<ReportCurrencyResponse>;
+  buckets: Array<BucketResponse>;
+  comparison: PeriodComparisonResponse;
+  anomaly_policy: AnomalyPolicyResponse;
+  anomalies: Array<AnomalyFlagResponse>;
+};
+
 export type HTTPValidationError = {
   detail?: Array<ValidationError>;
 };
@@ -211,6 +309,12 @@ export type MoneyInput = {
   currency: string;
 };
 
+export type MoneyMetricResponse = {
+  value: MoneyResponse;
+  formula: string;
+  evidence: EvidenceResponse;
+};
+
 export type MoneyResponse = {
   amount: string;
   currency: string;
@@ -224,6 +328,26 @@ export type OperationRequest = {
   description?: string;
   source?: "manual" | "import";
   tag_ids?: Array<string>;
+};
+
+export type PeriodComparisonResponse = {
+  current_start: string;
+  current_end: string;
+  previous_start: string;
+  previous_end: string;
+  current_is_complete: boolean;
+  currencies: Array<CurrencyComparisonResponse>;
+};
+
+export type PeriodGranularity = "day" | "week" | "month";
+
+export type PeriodResponse = {
+  start: string;
+  end: string;
+  timezone: string;
+  granularity: PeriodGranularity;
+  start_at: string;
+  end_at: string;
 };
 
 export type PostingResponse = {
@@ -291,6 +415,14 @@ export type RatePeriodResponse = {
   nominal_rate: string;
 };
 
+export type RatioMetricResponse = {
+  value: (string) | (null);
+  formula: string;
+  numerator: MoneyResponse;
+  denominator: MoneyResponse;
+  evidence: EvidenceResponse;
+};
+
 export type ReadinessChecks = {
   database?: "up";
 };
@@ -335,6 +467,22 @@ export type RecurringRuleResponse = {
   next_occurrence_at: (string) | (null);
   status: string;
   version: number;
+};
+
+export type ReportCurrencyResponse = {
+  currency: string;
+  income: MoneyMetricResponse;
+  expense: MoneyMetricResponse;
+  cash_flow: MoneyMetricResponse;
+  savings: MoneyMetricResponse;
+  mandatory_expense: MoneyMetricResponse;
+  mandatory_expense_share: RatioMetricResponse;
+  savings_rate: RatioMetricResponse;
+  opening_net_worth: MoneyMetricResponse;
+  closing_net_worth: MoneyMetricResponse;
+  net_worth_change: MoneyMetricResponse;
+  category_breakdown: Array<BreakdownItemResponse>;
+  group_breakdown: Array<BreakdownItemResponse>;
 };
 
 export type ReversalRequest = {
@@ -981,6 +1129,68 @@ export class FinancialAnalyticsClient {
     }
     const headers: Record<string, string> = {};
     return this.request<DepositValuationResponse>("GET", path, query, undefined, headers);
+  }
+
+  async getAnalyticsDashboard(args: { periodStart?: (string) | (null); periodEnd?: (string) | (null); granularity?: PeriodGranularity; } = {}): Promise<DashboardResponse> {
+    let path = "/api/v1/analytics/dashboard";
+    const query = new URLSearchParams();
+    if (args.periodStart !== undefined && args.periodStart !== null) {
+      const value = args.periodStart;
+      if (Array.isArray(value)) {
+        for (const item of value) query.append("period_start", String(item));
+      } else {
+        query.set("period_start", String(value));
+      }
+    }
+    if (args.periodEnd !== undefined && args.periodEnd !== null) {
+      const value = args.periodEnd;
+      if (Array.isArray(value)) {
+        for (const item of value) query.append("period_end", String(item));
+      } else {
+        query.set("period_end", String(value));
+      }
+    }
+    if (args.granularity !== undefined && args.granularity !== null) {
+      const value = args.granularity;
+      if (Array.isArray(value)) {
+        for (const item of value) query.append("granularity", String(item));
+      } else {
+        query.set("granularity", String(value));
+      }
+    }
+    const headers: Record<string, string> = {};
+    return this.request<DashboardResponse>("GET", path, query, undefined, headers);
+  }
+
+  async getFinancialReport(args: { periodStart: string; periodEnd: string; granularity?: PeriodGranularity; }): Promise<FinancialReportResponse> {
+    let path = "/api/v1/reports/financial";
+    const query = new URLSearchParams();
+    if (args.periodStart !== undefined && args.periodStart !== null) {
+      const value = args.periodStart;
+      if (Array.isArray(value)) {
+        for (const item of value) query.append("period_start", String(item));
+      } else {
+        query.set("period_start", String(value));
+      }
+    }
+    if (args.periodEnd !== undefined && args.periodEnd !== null) {
+      const value = args.periodEnd;
+      if (Array.isArray(value)) {
+        for (const item of value) query.append("period_end", String(item));
+      } else {
+        query.set("period_end", String(value));
+      }
+    }
+    if (args.granularity !== undefined && args.granularity !== null) {
+      const value = args.granularity;
+      if (Array.isArray(value)) {
+        for (const item of value) query.append("granularity", String(item));
+      } else {
+        query.set("granularity", String(value));
+      }
+    }
+    const headers: Record<string, string> = {};
+    return this.request<FinancialReportResponse>("GET", path, query, undefined, headers);
   }
 
   private async request<T>(

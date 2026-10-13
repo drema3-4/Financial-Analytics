@@ -108,6 +108,106 @@
         "title": "AdjustmentRequest",
         "type": "object"
       },
+      "AnomalyFlagResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "baseline_bucket_count": {
+            "title": "Baseline Bucket Count",
+            "type": "integer"
+          },
+          "bucket_end": {
+            "format": "date",
+            "title": "Bucket End",
+            "type": "string"
+          },
+          "bucket_start": {
+            "format": "date",
+            "title": "Bucket Start",
+            "type": "string"
+          },
+          "deviation": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/EvidenceResponse"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "observed": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "threshold": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          }
+        },
+        "required": [
+          "bucket_start",
+          "bucket_end",
+          "metric",
+          "direction",
+          "observed",
+          "baseline",
+          "deviation",
+          "threshold",
+          "rationale",
+          "baseline_bucket_count",
+          "evidence"
+        ],
+        "title": "AnomalyFlagResponse",
+        "type": "object"
+      },
+      "AnomalyPolicyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_buckets": {
+            "title": "Baseline Buckets",
+            "type": "integer"
+          },
+          "baseline_statistic": {
+            "title": "Baseline Statistic",
+            "type": "string"
+          },
+          "incomplete_buckets_evaluated": {
+            "title": "Incomplete Buckets Evaluated",
+            "type": "boolean"
+          },
+          "minimum_buckets": {
+            "title": "Minimum Buckets",
+            "type": "integer"
+          },
+          "threshold_formula": {
+            "title": "Threshold Formula",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "baseline_buckets",
+          "minimum_buckets",
+          "baseline_statistic",
+          "threshold_formula",
+          "incomplete_buckets_evaluated"
+        ],
+        "title": "AnomalyPolicyResponse",
+        "type": "object"
+      },
       "BootstrapRequest": {
         "additionalProperties": false,
         "properties": {
@@ -148,6 +248,80 @@
           "timezone"
         ],
         "title": "BootstrapRequest",
+        "type": "object"
+      },
+      "BreakdownItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/EvidenceResponse"
+          },
+          "flow_type": {
+            "title": "Flow Type",
+            "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flow_type",
+          "id",
+          "name",
+          "amount",
+          "evidence"
+        ],
+        "title": "BreakdownItemResponse",
+        "type": "object"
+      },
+      "BucketResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "currencies": {
+            "items": {
+              "$ref": "#/components/schemas/ReportCurrencyResponse"
+            },
+            "title": "Currencies",
+            "type": "array"
+          },
+          "end": {
+            "format": "date",
+            "title": "End",
+            "type": "string"
+          },
+          "is_complete": {
+            "title": "Is Complete",
+            "type": "boolean"
+          },
+          "start": {
+            "format": "date",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "is_complete",
+          "currencies"
+        ],
+        "title": "BucketResponse",
         "type": "object"
       },
       "CapitalizationFrequency": {
@@ -240,6 +414,10 @@
             "title": "Id",
             "type": "string"
           },
+          "is_mandatory": {
+            "title": "Is Mandatory",
+            "type": "boolean"
+          },
           "kind": {
             "$ref": "#/components/schemas/CategoryKind"
           },
@@ -257,9 +435,43 @@
           "name",
           "kind",
           "group_id",
+          "is_mandatory",
           "version"
         ],
         "title": "CategoryResponse",
+        "type": "object"
+      },
+      "ComparisonMetricResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "change_rate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Rate"
+          },
+          "current": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "delta": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "previous": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          }
+        },
+        "required": [
+          "current",
+          "previous",
+          "delta",
+          "change_rate"
+        ],
+        "title": "ComparisonMetricResponse",
         "type": "object"
       },
       "CreateAccountRequest": {
@@ -367,6 +579,7 @@
         "additionalProperties": false,
         "examples": [
           {
+            "is_mandatory": true,
             "kind": "expense",
             "name": "Продукты"
           }
@@ -383,6 +596,11 @@
               }
             ],
             "title": "Group Id"
+          },
+          "is_mandatory": {
+            "default": false,
+            "title": "Is Mandatory",
+            "type": "boolean"
           },
           "kind": {
             "$ref": "#/components/schemas/CategoryKind"
@@ -591,6 +809,154 @@
           "name"
         ],
         "title": "CreateTagRequest",
+        "type": "object"
+      },
+      "CurrencyComparisonResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cash_flow": {
+            "$ref": "#/components/schemas/ComparisonMetricResponse"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "expense": {
+            "$ref": "#/components/schemas/ComparisonMetricResponse"
+          },
+          "income": {
+            "$ref": "#/components/schemas/ComparisonMetricResponse"
+          },
+          "net_worth": {
+            "$ref": "#/components/schemas/ComparisonMetricResponse"
+          },
+          "savings": {
+            "$ref": "#/components/schemas/ComparisonMetricResponse"
+          }
+        },
+        "required": [
+          "currency",
+          "income",
+          "expense",
+          "cash_flow",
+          "savings",
+          "net_worth"
+        ],
+        "title": "CurrencyComparisonResponse",
+        "type": "object"
+      },
+      "DashboardCurrencyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cash_flow": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "closing_net_worth": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "expense": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "income": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "mandatory_expense": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "mandatory_expense_share": {
+            "$ref": "#/components/schemas/RatioMetricResponse"
+          },
+          "net_worth_change": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "opening_net_worth": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "savings": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "savings_rate": {
+            "$ref": "#/components/schemas/RatioMetricResponse"
+          }
+        },
+        "required": [
+          "currency",
+          "income",
+          "expense",
+          "cash_flow",
+          "savings",
+          "mandatory_expense",
+          "mandatory_expense_share",
+          "savings_rate",
+          "opening_net_worth",
+          "closing_net_worth",
+          "net_worth_change"
+        ],
+        "title": "DashboardCurrencyResponse",
+        "type": "object"
+      },
+      "DashboardResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "anomalies": {
+            "items": {
+              "$ref": "#/components/schemas/AnomalyFlagResponse"
+            },
+            "title": "Anomalies",
+            "type": "array"
+          },
+          "anomaly_policy": {
+            "$ref": "#/components/schemas/AnomalyPolicyResponse"
+          },
+          "combined_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Combined Currency"
+          },
+          "comparison": {
+            "$ref": "#/components/schemas/PeriodComparisonResponse"
+          },
+          "currency_mode": {
+            "title": "Currency Mode",
+            "type": "string"
+          },
+          "data_through": {
+            "format": "date-time",
+            "title": "Data Through",
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/PeriodResponse"
+          },
+          "totals": {
+            "items": {
+              "$ref": "#/components/schemas/DashboardCurrencyResponse"
+            },
+            "title": "Totals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "period",
+          "data_through",
+          "currency_mode",
+          "combined_currency",
+          "totals",
+          "comparison",
+          "anomaly_policy",
+          "anomalies"
+        ],
+        "title": "DashboardResponse",
         "type": "object"
       },
       "DayCountConvention": {
@@ -933,6 +1299,101 @@
         "title": "EarlyCloseRuleResponse",
         "type": "object"
       },
+      "EvidenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "posting_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Posting Ids",
+            "type": "array"
+          },
+          "transaction_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Transaction Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "transaction_ids",
+          "posting_ids"
+        ],
+        "title": "EvidenceResponse",
+        "type": "object"
+      },
+      "FinancialReportResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "anomalies": {
+            "items": {
+              "$ref": "#/components/schemas/AnomalyFlagResponse"
+            },
+            "title": "Anomalies",
+            "type": "array"
+          },
+          "anomaly_policy": {
+            "$ref": "#/components/schemas/AnomalyPolicyResponse"
+          },
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/BucketResponse"
+            },
+            "title": "Buckets",
+            "type": "array"
+          },
+          "combined_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Combined Currency"
+          },
+          "comparison": {
+            "$ref": "#/components/schemas/PeriodComparisonResponse"
+          },
+          "currency_mode": {
+            "title": "Currency Mode",
+            "type": "string"
+          },
+          "data_through": {
+            "format": "date-time",
+            "title": "Data Through",
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/PeriodResponse"
+          },
+          "totals": {
+            "items": {
+              "$ref": "#/components/schemas/ReportCurrencyResponse"
+            },
+            "title": "Totals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "period",
+          "data_through",
+          "currency_mode",
+          "combined_currency",
+          "totals",
+          "buckets",
+          "comparison",
+          "anomaly_policy",
+          "anomalies"
+        ],
+        "title": "FinancialReportResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1102,6 +1563,28 @@
         "title": "MoneyInput",
         "type": "object"
       },
+      "MoneyMetricResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/EvidenceResponse"
+          },
+          "formula": {
+            "title": "Formula",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          }
+        },
+        "required": [
+          "value",
+          "formula",
+          "evidence"
+        ],
+        "title": "MoneyMetricResponse",
+        "type": "object"
+      },
       "MoneyResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1188,6 +1671,103 @@
           "occurred_at"
         ],
         "title": "OperationRequest",
+        "type": "object"
+      },
+      "PeriodComparisonResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "currencies": {
+            "items": {
+              "$ref": "#/components/schemas/CurrencyComparisonResponse"
+            },
+            "title": "Currencies",
+            "type": "array"
+          },
+          "current_end": {
+            "format": "date-time",
+            "title": "Current End",
+            "type": "string"
+          },
+          "current_is_complete": {
+            "title": "Current Is Complete",
+            "type": "boolean"
+          },
+          "current_start": {
+            "format": "date-time",
+            "title": "Current Start",
+            "type": "string"
+          },
+          "previous_end": {
+            "format": "date-time",
+            "title": "Previous End",
+            "type": "string"
+          },
+          "previous_start": {
+            "format": "date-time",
+            "title": "Previous Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_start",
+          "current_end",
+          "previous_start",
+          "previous_end",
+          "current_is_complete",
+          "currencies"
+        ],
+        "title": "PeriodComparisonResponse",
+        "type": "object"
+      },
+      "PeriodGranularity": {
+        "enum": [
+          "day",
+          "week",
+          "month"
+        ],
+        "title": "PeriodGranularity",
+        "type": "string"
+      },
+      "PeriodResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "format": "date",
+            "title": "End",
+            "type": "string"
+          },
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "granularity": {
+            "$ref": "#/components/schemas/PeriodGranularity"
+          },
+          "start": {
+            "format": "date",
+            "title": "Start",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "timezone",
+          "granularity",
+          "start_at",
+          "end_at"
+        ],
+        "title": "PeriodResponse",
         "type": "object"
       },
       "PostingResponse": {
@@ -1502,6 +2082,44 @@
         "title": "RatePeriodResponse",
         "type": "object"
       },
+      "RatioMetricResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "denominator": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/EvidenceResponse"
+          },
+          "formula": {
+            "title": "Formula",
+            "type": "string"
+          },
+          "numerator": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "value",
+          "formula",
+          "numerator",
+          "denominator",
+          "evidence"
+        ],
+        "title": "RatioMetricResponse",
+        "type": "object"
+      },
       "ReadinessChecks": {
         "properties": {
           "database": {
@@ -1749,6 +2367,76 @@
           "version"
         ],
         "title": "RecurringRuleResponse",
+        "type": "object"
+      },
+      "ReportCurrencyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cash_flow": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "category_breakdown": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownItemResponse"
+            },
+            "title": "Category Breakdown",
+            "type": "array"
+          },
+          "closing_net_worth": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "expense": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "group_breakdown": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownItemResponse"
+            },
+            "title": "Group Breakdown",
+            "type": "array"
+          },
+          "income": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "mandatory_expense": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "mandatory_expense_share": {
+            "$ref": "#/components/schemas/RatioMetricResponse"
+          },
+          "net_worth_change": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "opening_net_worth": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "savings": {
+            "$ref": "#/components/schemas/MoneyMetricResponse"
+          },
+          "savings_rate": {
+            "$ref": "#/components/schemas/RatioMetricResponse"
+          }
+        },
+        "required": [
+          "currency",
+          "income",
+          "expense",
+          "cash_flow",
+          "savings",
+          "mandatory_expense",
+          "mandatory_expense_share",
+          "savings_rate",
+          "opening_net_worth",
+          "closing_net_worth",
+          "net_worth_change",
+          "category_breakdown",
+          "group_breakdown"
+        ],
+        "title": "ReportCurrencyResponse",
         "type": "object"
       },
       "ReversalRequest": {
@@ -2711,6 +3399,94 @@
         "summary": "Create Adjustment",
         "tags": [
           "ledger"
+        ]
+      }
+    },
+    "/api/v1/analytics/dashboard": {
+      "get": {
+        "operationId": "getAnalyticsDashboard",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "period_start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Period Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "period_end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Period End"
+            }
+          },
+          {
+            "in": "query",
+            "name": "granularity",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PeriodGranularity",
+              "default": "month"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Get Dashboard",
+        "tags": [
+          "analytics"
         ]
       }
     },
@@ -5019,6 +5795,80 @@
         "summary": "Resume Rule",
         "tags": [
           "recurring-rules"
+        ]
+      }
+    },
+    "/api/v1/reports/financial": {
+      "get": {
+        "operationId": "getFinancialReport",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "period_start",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Period Start",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "period_end",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Period End",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "granularity",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PeriodGranularity",
+              "default": "month"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FinancialReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Get Financial Report",
+        "tags": [
+          "reports"
         ]
       }
     },

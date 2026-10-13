@@ -136,6 +136,7 @@ class CategoryResponse(ApiModel):
     name: str
     kind: CategoryKind
     group_id: UUID | None
+    is_mandatory: bool
     version: int
 
 
@@ -150,12 +151,22 @@ class CategoryGroupResponse(ApiModel):
 class CreateCategoryRequest(ApiModel):
     model_config = ConfigDict(
         extra="forbid",
-        json_schema_extra={"examples": [{"name": "Продукты", "kind": "expense", "group_id": None}]},
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "Продукты",
+                    "kind": "expense",
+                    "group_id": None,
+                    "is_mandatory": True,
+                }
+            ]
+        },
     )
 
     name: str = Field(min_length=1, max_length=160)
     kind: CategoryKind
     group_id: UUID | None = None
+    is_mandatory: bool = False
 
 
 class CreateTagRequest(ApiModel):
@@ -538,6 +549,7 @@ def create_category(
         name=payload.name,
         kind=payload.kind,
         group_id=payload.group_id,
+        is_mandatory=payload.is_mandatory,
         idempotency_key=idempotency_key,
         request_hash=_request_hash(payload),
         request_id=_request_id(request),
@@ -894,6 +906,7 @@ def _category_response(category: Category) -> CategoryResponse:
         name=category.name,
         kind=category.kind,
         group_id=category.group_id,
+        is_mandatory=category.is_mandatory,
         version=category.version,
     )
 

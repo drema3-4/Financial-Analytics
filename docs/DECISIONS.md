@@ -228,3 +228,42 @@ projected closing value, annualized выбранной day-count convention; к�
 rounding, tax и early-close semantics делают одинаковый input воспроизводимым без догадок о
 конкретном банке или юрисдикции.
 
+## ADR-016: reconciled analytics без неявного FX
+
+**Дата:** 2026-10-13.
+
+**Решение:** аналитика этапа 07 является read model поверх immutable ledger, а не отдельным
+источником финансовых фактов. Application query получает только owner-scoped posted
+transactions, accounts и справочники; чистый domain calculator восстанавливает показатели из
+asset-side postings. Income, expense и deposit interest входят во внешний cash flow, transfer
+нейтрален, adjustment меняет net worth, но не income/expense. Reversal учитывается в дату
+reversal с видом и категорией исходной операции и строго противоположным вкладом.
+
+Каждая валюта агрегируется отдельно. Пока нет versioned FX fact с rate и source, общий total
+для нескольких валют отсутствует, а contract явно сообщает `separated_by_currency`. Периоды
+полуоткрытые и строятся от local midnight профиля: day, ISO-week с понедельника и calendar
+month. Незакрытый период содержит только факты до query clock, помечается incomplete, а его
+comparison использует тот же local elapsed cut предыдущего диапазона. Пустые buckets
+материализуются нулями.
+
+Обязательность расхода — явный справочный смысл категории в рамках текущего MVP:
+`categories.is_mandatory`; income category не может быть mandatory. Этап 07 не публикует
+mutation этого признака, поэтому одна и та же ledger/reference revision воспроизводит тот же
+результат.
+Savings равен `income - expense`; savings rate определён только при положительном income.
+Mandatory share определён только при положительном total expense.
+
+Anomaly rule version `median-mad-v1` использует шесть предыдущих завершённых buckets и требует
+минимум три. Baseline — median, dispersion — median absolute deviation, threshold — максимум
+из `50% * abs(baseline)` и `3 * MAD`. Ненулевое наблюдение при нулевых baseline/MAD считается
+new activity. Незакрытые buckets не получают anomaly flag. Ответ возвращает observed,
+baseline, deviation, threshold, rationale и IDs исходных transactions/postings.
+
+**Почему:** эта схема сохраняет сверяемость с ledger и не создаёт ложной точности для FX.
+Category flag даёт проверяемый источник обязательной доли вместо эвристики по названию.
+Calendar-aligned boundaries и explicit clock устраняют зависимость от timezone хоста, а
+median/MAD дают устойчивое и полностью объяснимое правило без LLM. Отдельная таблица
+агрегатов пока не вводится: сначала измеряется owner/date access path на реалистичном наборе;
+performance budget задаётся формой plan/query count и объёмом прочитанных rows, а не хрупким
+wall-clock временем CI.
+

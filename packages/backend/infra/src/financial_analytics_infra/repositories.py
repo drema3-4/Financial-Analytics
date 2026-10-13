@@ -7,7 +7,7 @@ from datetime import datetime
 from types import TracebackType
 from uuid import UUID, uuid4
 
-from sqlalchemy import Select, exists, func, select, tuple_, update
+from sqlalchemy import Select, exists, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -254,6 +254,7 @@ class PostgresLedgerRepository:
                 group_id=category.group_id,
                 name=category.name,
                 kind=category.kind.value,
+                is_mandatory=category.is_mandatory,
                 version=category.version,
             )
         )
@@ -289,6 +290,7 @@ class PostgresLedgerRepository:
                 name=category.name,
                 kind=category.kind.value,
                 group_id=category.group_id,
+                is_mandatory=category.is_mandatory,
                 version=new_version,
             )
             .returning(CategoryModel.id)
@@ -301,6 +303,7 @@ class PostgresLedgerRepository:
             name=category.name,
             kind=category.kind,
             group_id=category.group_id,
+            is_mandatory=category.is_mandatory,
             version=new_version,
         )
 
@@ -553,6 +556,41 @@ class PostgresLedgerRepository:
             result.append(transaction)
         return tuple(result)
 
+    def list_analytics_transactions(self, occurred_to: datetime) -> tuple[Transaction, ...]:
+        reversal_originals = select(TransactionModel.reversal_of_id).where(
+            TransactionModel.owner_id == self._owner_id,
+            TransactionModel.status == "posted",
+            TransactionModel.occurred_at < occurred_to,
+            TransactionModel.reversal_of_id.is_not(None),
+        )
+        rows = self._session.scalars(
+            select(TransactionModel)
+            .where(
+                TransactionModel.owner_id == self._owner_id,
+                TransactionModel.status == "posted",
+                or_(
+                    TransactionModel.occurred_at < occurred_to,
+                    TransactionModel.id.in_(reversal_originals),
+                ),
+            )
+            .order_by(TransactionModel.occurred_at, TransactionModel.id)
+        ).all()
+        if not rows:
+            return ()
+        transaction_ids = [row.id for row in rows]
+        posting_rows = self._session.scalars(
+            select(PostingModel)
+            .where(
+                PostingModel.owner_id == self._owner_id,
+                PostingModel.transaction_id.in_(transaction_ids),
+            )
+            .order_by(PostingModel.transaction_id, PostingModel.line_no)
+        ).all()
+        postings_by_transaction: defaultdict[UUID, list[PostingModel]] = defaultdict(list)
+        for posting in posting_rows:
+            postings_by_transaction[posting.transaction_id].append(posting)
+        return tuple(_transaction_from_rows(row, postings_by_transaction[row.id]) for row in rows)
+
     def rebuild_balances(self) -> dict[UUID, Money]:
         accounts = self._session.execute(
             select(AccountModel.id, AccountModel.currency).where(
@@ -801,6 +839,7 @@ def _category_from_row(row: CategoryModel) -> Category:
         name=row.name,
         kind=CategoryKind(row.kind),
         group_id=row.group_id,
+        is_mandatory=row.is_mandatory,
         version=row.version,
     )
 
