@@ -11,10 +11,16 @@ from financial_analytics_app.ports import (
     AuditEvent,
     IdempotencyRecord,
     LedgerRepository,
+    SchedulingRepository,
     TransactionCursor,
     TransactionQuery,
     UnitOfWork,
     UnitOfWorkFactory,
+)
+from financial_analytics_app.scheduling import (
+    RecurringJobProcessor,
+    SchedulingService,
+    WorkerTickResult,
 )
 from financial_analytics_app.services import (
     ConcurrentModificationError,
@@ -33,9 +39,13 @@ __all__ = [
     "RecordTransaction",
     "ResourceConflictError",
     "ResourceNotFoundError",
+    "RecurringJobProcessor",
+    "SchedulingRepository",
+    "SchedulingService",
     "TransactionCursor",
     "TransactionPage",
     "TransactionQuery",
     "UnitOfWork",
     "UnitOfWorkFactory",
+    "WorkerTickResult",
 ]

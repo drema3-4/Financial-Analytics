@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import TracebackType
 from typing import Protocol, Self
 from uuid import UUID
@@ -14,7 +14,10 @@ from financial_analytics_domain import (
     Currency,
     Instant,
     Money,
+    OutboxJob,
     Posting,
+    RecurringOperation,
+    RecurringRule,
     Tag,
     Transaction,
     TransactionKind,
@@ -155,3 +158,64 @@ class UnitOfWork(Protocol):
 
 class UnitOfWorkFactory(Protocol):
     def open(self, owner_id: UUID) -> UnitOfWork: ...
+
+
+class SchedulingRepository(Protocol):
+    """Durable recurring-rule and PostgreSQL outbox boundary."""
+
+    def validate_operation(self, owner_id: UUID, operation: RecurringOperation) -> str | None: ...
+
+    def create_rule(self, rule: RecurringRule, audit_event: AuditEvent) -> RecurringRule: ...
+
+    def get_rule(self, owner_id: UUID, rule_id: UUID) -> RecurringRule | None: ...
+
+    def list_rules(self, owner_id: UUID) -> tuple[RecurringRule, ...]: ...
+
+    def save_rule(
+        self,
+        rule: RecurringRule,
+        *,
+        expected_version: int,
+        audit_event: AuditEvent,
+    ) -> RecurringRule: ...
+
+    def materialize_due(self, now: Instant, *, limit: int) -> int: ...
+
+    def claim_jobs(
+        self,
+        now: Instant,
+        *,
+        worker_id: str,
+        lease_duration: timedelta,
+        limit: int,
+    ) -> tuple[OutboxJob, ...]: ...
+
+    def complete_job(
+        self,
+        job_id: UUID,
+        *,
+        worker_id: str,
+        transaction_id: UUID,
+        completed_at: Instant,
+    ) -> None: ...
+
+    def fail_job(
+        self,
+        job_id: UUID,
+        *,
+        worker_id: str,
+        failed_at: Instant,
+        error: str,
+        base_backoff: timedelta,
+    ) -> None: ...
+
+    def list_dead_letters(self, owner_id: UUID) -> tuple[OutboxJob, ...]: ...
+
+    def retry_dead_letter(
+        self,
+        owner_id: UUID,
+        job_id: UUID,
+        *,
+        retried_at: Instant,
+        audit_event: AuditEvent,
+    ) -> OutboxJob | None: ...

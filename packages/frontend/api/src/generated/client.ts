@@ -28,6 +28,8 @@ export type BootstrapRequest = {
   timezone: string;
 };
 
+export type CatchUpPolicy = "all" | "latest";
+
 export type CategoryGroupResponse = {
   id: string;
   name: string;
@@ -65,8 +67,29 @@ export type CreateCategoryRequest = {
   group_id?: (string) | (null);
 };
 
+export type CreateRecurringRuleRequest = {
+  frequency: RecurrenceFrequency;
+  starts_on: string;
+  local_time: string;
+  timezone: string;
+  missing_day_policy?: MissingDayPolicy;
+  catch_up_policy?: CatchUpPolicy;
+  end_date?: (string) | (null);
+  operation: RecurringOperationInput;
+};
+
 export type CreateTagRequest = {
   name: string;
+};
+
+export type DeadLetterJobResponse = {
+  id: string;
+  rule_id: string;
+  occurrence_at: string;
+  state: string;
+  attempts: number;
+  max_attempts: number;
+  last_error: (string) | (null);
 };
 
 export type HTTPValidationError = {
@@ -81,6 +104,8 @@ export type LoginRequest = {
   email: string;
   password: string;
 };
+
+export type MissingDayPolicy = "last_day" | "skip";
 
 export type MoneyInput = {
   amount: string;
@@ -107,6 +132,23 @@ export type PostingResponse = {
   account_id: string;
   money: MoneyResponse;
   reversal_of_id: (string) | (null);
+};
+
+export type PreviewOccurrenceResponse = {
+  occurrence_at: string;
+  local_at: string;
+};
+
+export type PreviewOccurrencesRequest = {
+  frequency: RecurrenceFrequency;
+  starts_on: string;
+  local_time: string;
+  timezone: string;
+  missing_day_policy?: MissingDayPolicy;
+  catch_up_policy?: CatchUpPolicy;
+  end_date?: (string) | (null);
+  from_at?: (string) | (null);
+  count?: number;
 };
 
 export type ProblemDetails = {
@@ -143,9 +185,50 @@ export type ReadinessResponse = {
   checks: ReadinessChecks;
 };
 
+export type RecurrenceFrequency = "daily" | "weekly" | "monthly" | "yearly";
+
+export type RecurringOperationInput = {
+  kind: TransactionKind;
+  account_id: string;
+  destination_account_id?: (string) | (null);
+  category_id?: (string) | (null);
+  money: MoneyInput;
+  description?: string;
+  tag_ids?: Array<string>;
+};
+
+export type RecurringOperationResponse = {
+  kind: TransactionKind;
+  account_id: string;
+  destination_account_id: (string) | (null);
+  category_id: (string) | (null);
+  money: MoneyResponse;
+  description: string;
+  tag_ids: Array<string>;
+};
+
+export type RecurringRuleResponse = {
+  id: string;
+  operation: RecurringOperationResponse;
+  frequency: RecurrenceFrequency;
+  starts_on: string;
+  local_time: string;
+  timezone: string;
+  missing_day_policy: MissingDayPolicy;
+  catch_up_policy: CatchUpPolicy;
+  end_date: (string) | (null);
+  next_occurrence_at: (string) | (null);
+  status: string;
+  version: number;
+};
+
 export type ReversalRequest = {
   occurred_at: string;
   reason: string;
+};
+
+export type RuleVersionRequest = {
+  version: number;
 };
 
 export type TagResponse = {
@@ -188,6 +271,18 @@ export type UpdateAccountRequest = {
   version: number;
   name?: (string) | (null);
   archived?: (boolean) | (null);
+};
+
+export type UpdateRecurringRuleRequest = {
+  frequency: RecurrenceFrequency;
+  starts_on: string;
+  local_time: string;
+  timezone: string;
+  missing_day_policy?: MissingDayPolicy;
+  catch_up_policy?: CatchUpPolicy;
+  end_date?: (string) | (null);
+  operation: RecurringOperationInput;
+  version: number;
 };
 
 export type ValidationError = {
@@ -597,6 +692,97 @@ export class FinancialAnalyticsClient {
       headers["X-CSRF-Token"] = String(args.xCSRFToken);
     }
     return this.request<TransactionResponse>("POST", path, query, args.body, headers);
+  }
+
+  async previewRecurringOccurrences(args: { body: PreviewOccurrencesRequest; }): Promise<Array<PreviewOccurrenceResponse>> {
+    let path = "/api/v1/recurring-rules/preview";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    return this.request<Array<PreviewOccurrenceResponse>>("POST", path, query, args.body, headers);
+  }
+
+  async listRecurringRules(): Promise<Array<RecurringRuleResponse>> {
+    let path = "/api/v1/recurring-rules";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    return this.request<Array<RecurringRuleResponse>>("GET", path, query, undefined, headers);
+  }
+
+  async createRecurringRule(args: { xCSRFToken: (string) | (null); body: CreateRecurringRuleRequest; }): Promise<RecurringRuleResponse> {
+    let path = "/api/v1/recurring-rules";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<RecurringRuleResponse>("POST", path, query, args.body, headers);
+  }
+
+  async getRecurringRule(args: { ruleId: string; }): Promise<RecurringRuleResponse> {
+    let path = "/api/v1/recurring-rules/{rule_id}";
+    path = path.replace("{rule_id}", encodeURIComponent(String(args.ruleId)));
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    return this.request<RecurringRuleResponse>("GET", path, query, undefined, headers);
+  }
+
+  async updateRecurringRule(args: { ruleId: string; xCSRFToken: (string) | (null); body: UpdateRecurringRuleRequest; }): Promise<RecurringRuleResponse> {
+    let path = "/api/v1/recurring-rules/{rule_id}";
+    path = path.replace("{rule_id}", encodeURIComponent(String(args.ruleId)));
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<RecurringRuleResponse>("PUT", path, query, args.body, headers);
+  }
+
+  async pauseRecurringRule(args: { ruleId: string; xCSRFToken: (string) | (null); body: RuleVersionRequest; }): Promise<RecurringRuleResponse> {
+    let path = "/api/v1/recurring-rules/{rule_id}/pause";
+    path = path.replace("{rule_id}", encodeURIComponent(String(args.ruleId)));
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<RecurringRuleResponse>("POST", path, query, args.body, headers);
+  }
+
+  async resumeRecurringRule(args: { ruleId: string; xCSRFToken: (string) | (null); body: RuleVersionRequest; }): Promise<RecurringRuleResponse> {
+    let path = "/api/v1/recurring-rules/{rule_id}/resume";
+    path = path.replace("{rule_id}", encodeURIComponent(String(args.ruleId)));
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<RecurringRuleResponse>("POST", path, query, args.body, headers);
+  }
+
+  async listDeadLetterJobs(args: { limit?: number; } = {}): Promise<Array<DeadLetterJobResponse>> {
+    let path = "/api/v1/recurring-jobs/dead-letter";
+    const query = new URLSearchParams();
+    if (args.limit !== undefined && args.limit !== null) {
+      const value = args.limit;
+      if (Array.isArray(value)) {
+        for (const item of value) query.append("limit", String(item));
+      } else {
+        query.set("limit", String(value));
+      }
+    }
+    const headers: Record<string, string> = {};
+    return this.request<Array<DeadLetterJobResponse>>("GET", path, query, undefined, headers);
+  }
+
+  async retryDeadLetterJob(args: { jobId: string; xCSRFToken: (string) | (null); }): Promise<DeadLetterJobResponse> {
+    let path = "/api/v1/recurring-jobs/{job_id}/retry";
+    path = path.replace("{job_id}", encodeURIComponent(String(args.jobId)));
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<DeadLetterJobResponse>("POST", path, query, undefined, headers);
   }
 
   private async request<T>(

@@ -127,7 +127,18 @@ Advice orchestrator получает `AdviceContext`: агрегаты, цели
 
 ## 8. Фоновые задания
 
-Для MVP worker забирает задания из PostgreSQL через `FOR UPDATE SKIP LOCKED`. Это покрывает recurring operations, outbox и почту без второго datastore. Задания имеют attempts, backoff, lease, deduplication key и dead-letter state. Если нагрузка докажет необходимость, порт очереди можно переключить на Redis/другой broker без изменения домена.
+Для MVP worker забирает задания из PostgreSQL через `FOR UPDATE SKIP LOCKED`. Scheduler тем
+же способом блокирует due rules, атомарно пишет snapshot occurrence в `outbox_jobs` и двигает
+`next_occurrence_at`. Jobs имеют attempts, exponential backoff, lease, уникальный
+deduplication key и dead-letter state. Ledger commit и acknowledgement jobs разделены;
+повтор после crash безопасен благодаря общей application-команде и idempotency key
+`(rule_id, occurrence_at)`.
+
+Календарь остаётся чистой доменной логикой: daily/weekly/monthly/yearly, inclusive end date,
+`last_day`/`skip`, IANA timezone и явная DST policy. API preview использует тот же калькулятор
+без записи в БД. Оператор видит tenant-scoped dead-letter и запускает только аудируемый retry.
+Если нагрузка докажет необходимость, порт очереди можно переключить на другой broker без
+изменения домена или ledger use case.
 
 ## 9. LLM-провайдер
 

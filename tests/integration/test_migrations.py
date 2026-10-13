@@ -35,6 +35,8 @@ def test_clean_upgrade_and_empty_schema_downgrade() -> None:
             "email_allowlist",
             "invitations",
             "email_tokens",
+            "recurring_rules",
+            "outbox_jobs",
         }.issubset(inspect(engine).get_table_names())
 
         command.downgrade(config, "20261013_0001")

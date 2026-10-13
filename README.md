@@ -1,8 +1,9 @@
 # Financial Analytics
 
-Local-first приложение для учёта личных финансов. Этап 04 даёт idempotent ledger API для
+Local-first приложение для учёта личных финансов. Этап 05 даёт idempotent ledger API для
 accounts, categories, income/expense/transfer/adjustment/reversal, stable cursor pagination,
-UTF-8 CSV export и generated TypeScript client поверх double-entry domain core. Identity
+UTF-8 CSV export, recurring rules и PostgreSQL outbox worker с lease/backoff/dead-letter.
+Generated TypeScript client построен поверх double-entry domain core. Identity
 использует одноразовый master bootstrap, Argon2id и ротируемые cookie sessions с CSRF/CORS.
 
 Источники требований: [SPEC.md](SPEC.md), [PLAN.md](PLAN.md) и
@@ -174,11 +175,11 @@ pnpm --filter @financial-analytics/web exec vite --host 127.0.0.1
 docker compose config --quiet
 ```
 
-Revisions `20261013_0004`–`0005` добавляют adjustment/system-equity semantics, transaction
-source и immutable transaction tags для Ledger API. CI проверяет upgrade на чистой PostgreSQL
-database, отсутствие drift между SQLAlchemy metadata и Alembic, integration tests и downgrade
-до пустого bootstrap revision. Полная схема и правила — в
-[docs/DATA_MODEL.md](docs/DATA_MODEL.md). Security model — в
+Revisions `20261013_0004`–`0007` добавляют Ledger API и recurring rules/outbox. CI проверяет
+upgrade на чистой PostgreSQL database, отсутствие drift между SQLAlchemy metadata и Alembic,
+integration tests и downgrade до пустого bootstrap revision. Полная схема и правила — в
+[docs/DATA_MODEL.md](docs/DATA_MODEL.md), а мониторинг/retry worker — в
+[docs/SCHEDULING_RUNBOOK.md](docs/SCHEDULING_RUNBOOK.md). Security model — в
 [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Структура

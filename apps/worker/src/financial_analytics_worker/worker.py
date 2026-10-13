@@ -10,6 +10,10 @@ class ReadinessDatabase(Protocol):
     def ping(self) -> bool: ...
 
 
+class JobProcessor(Protocol):
+    def tick(self, worker_id: str) -> object: ...
+
+
 class Heartbeat:
     def __init__(
         self,
@@ -35,14 +39,25 @@ class Heartbeat:
 
 
 class Worker:
-    """Bootstrap worker loop; durable job handling is introduced in milestone 05."""
+    """Readiness-aware wrapper around the durable recurring job processor."""
 
-    def __init__(self, database: ReadinessDatabase, heartbeat: Heartbeat) -> None:
+    def __init__(
+        self,
+        database: ReadinessDatabase,
+        heartbeat: Heartbeat,
+        processor: JobProcessor | None = None,
+        *,
+        worker_id: str = "worker",
+    ) -> None:
         self._database = database
         self._heartbeat = heartbeat
+        self._processor = processor
+        self._worker_id = worker_id
 
     def tick(self) -> bool:
         if not self._database.ping():
             return False
+        if self._processor is not None:
+            self._processor.tick(self._worker_id)
         self._heartbeat.mark()
         return True

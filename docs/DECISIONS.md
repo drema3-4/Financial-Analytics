@@ -161,3 +161,36 @@ double-entry и audit trail. Advisory lock закрывает race до unique c
 сериализации. Keyset cursor остаётся стабильным при вставке новых операций между страницами,
 а checked-in snapshot делает HTTP contract и клиент воспроизводимыми.
 
+## ADR-014: materialized recurring occurrences и PostgreSQL outbox
+
+**Дата:** 2026-10-13.
+
+**Решение:** регулярное правило хранит wall-clock расписание (`starts_on`, `local_time`, IANA
+timezone), текущее `next_occurrence_at` в UTC и immutable anchor дня/месяца. Scheduler в одной
+PostgreSQL-транзакции выбирает due-правила через `FOR UPDATE SKIP LOCKED`, создаёт outbox job
+с полным снимком операции и уникальным `dedup_key = (rule_id, occurrence_at)`, затем двигает
+`next_occurrence_at`. Поэтому последующее редактирование правила не меняет уже
+материализованный occurrence.
+
+Worker арендует jobs через `FOR UPDATE SKIP LOCKED`. Lease имеет владельца и UTC expiry,
+claim увеличивает `attempts`, а ошибка переводит job в delayed retry с ограниченным
+экспоненциальным backoff. После исчерпания попыток job остаётся в `dead_letter`; ручной retry
+возвращает его в очередь и пишет append-only audit event. Финансовая команда выполняется тем
+же `LedgerService`, что HTTP API, с ключом `<rule_id>:<occurrence_at UTC>` и каноническим hash
+снимка. Commit ledger и подтверждение job намеренно разделены: crash между ними приводит к
+повторной доставке, которую поглощает ledger idempotency record.
+
+`catch_up_policy=all` материализует каждый пропущенный occurrence (по одному на правило за
+проход для ограничения нагрузки); `latest` материализует только последний due occurrence и
+явно пропускает более ранние. Monthly/yearly anchor не дрейфует после короткого месяца:
+`last_day` использует последний день конкретного месяца, `skip` пропускает несуществующую
+дату. Для DST неоднозначное local time выбирает первый instant (`fold=0`), а несуществующее
+local time сдвигается вперёд на величину gap; в ledger всегда сохраняется полученный UTC
+instant.
+
+**Почему:** снимок отделяет уже принятое к исполнению финансовое событие от изменяемого
+шаблона, а связка durable outbox + idempotent ledger обеспечивает at-least-once delivery с
+exactly-once финансовым эффектом без распределённой транзакции. Wall-clock anchor сохраняет
+ожидаемое пользовательское время при смене UTC offset и делает leap-year/month-end политику
+явной и тестируемой.
+

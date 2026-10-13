@@ -76,3 +76,23 @@ def test_checked_in_openapi_snapshot_matches_application() -> None:
     generated = create_app(settings).openapi()
     snapshot = json.loads((ROOT / "docs" / "openapi.json").read_text(encoding="utf-8"))
     assert snapshot == generated
+
+
+def test_openapi_documents_recurring_rules_preview_and_dead_letter_retry() -> None:
+    settings = Settings(app_env=AppEnvironment.TEST, _env_file=None)
+    schema = create_app(settings).openapi()
+    required_paths = {
+        "/api/v1/recurring-rules",
+        "/api/v1/recurring-rules/preview",
+        "/api/v1/recurring-rules/{rule_id}",
+        "/api/v1/recurring-rules/{rule_id}/pause",
+        "/api/v1/recurring-rules/{rule_id}/resume",
+        "/api/v1/recurring-jobs/dead-letter",
+        "/api/v1/recurring-jobs/{job_id}/retry",
+    }
+    assert required_paths <= schema["paths"].keys()
+    preview = schema["paths"]["/api/v1/recurring-rules/preview"]["post"]
+    assert preview["operationId"] == "previewRecurringOccurrences"
+    assert preview["responses"]["200"]
+    retry = schema["paths"]["/api/v1/recurring-jobs/{job_id}/retry"]["post"]
+    assert "403" in retry["responses"]

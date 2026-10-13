@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -16,6 +17,7 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     String,
     Text,
+    Time,
     UniqueConstraint,
     text,
 )
@@ -502,6 +504,164 @@ class IdempotencyRecordModel(Base):
     resource_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RecurringRuleModel(Base):
+    __tablename__ = "recurring_rules"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id", name="uq_recurring_rules_owner_id_id"),
+        ForeignKeyConstraint(
+            ["owner_id", "account_id", "currency"],
+            ["accounts.owner_id", "accounts.id", "accounts.currency"],
+            name="fk_recurring_rules_owner_account_currency_accounts",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "destination_account_id", "currency"],
+            ["accounts.owner_id", "accounts.id", "accounts.currency"],
+            name="fk_recurring_rules_owner_destination_currency_accounts",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "category_id"],
+            ["categories.owner_id", "categories.id"],
+            name="fk_recurring_rules_owner_category_categories",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("kind IN ('income', 'expense', 'transfer')", name="recurring_rule_kind"),
+        CheckConstraint(
+            "frequency IN ('daily', 'weekly', 'monthly', 'yearly')",
+            name="recurring_rule_frequency",
+        ),
+        CheckConstraint(
+            "missing_day_policy IN ('last_day', 'skip')",
+            name="recurring_rule_missing_day_policy",
+        ),
+        CheckConstraint(
+            "catch_up_policy IN ('all', 'latest')",
+            name="recurring_rule_catch_up_policy",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'paused', 'completed')", name="recurring_rule_status"
+        ),
+        CheckConstraint("currency ~ '^[A-Z]{3}$'", name="recurring_rule_currency"),
+        CheckConstraint("amount > 0", name="recurring_rule_amount"),
+        CheckConstraint("char_length(timezone) BETWEEN 1 AND 100", name="recurring_rule_timezone"),
+        CheckConstraint("version > 0", name="recurring_rule_version"),
+        CheckConstraint("end_date IS NULL OR end_date >= starts_on", name="recurring_rule_end"),
+        CheckConstraint(
+            "(kind IN ('income', 'expense') AND category_id IS NOT NULL "
+            "AND destination_account_id IS NULL) OR "
+            "(kind = 'transfer' AND category_id IS NULL "
+            "AND destination_account_id IS NOT NULL AND account_id <> destination_account_id)",
+            name="recurring_rule_operation_shape",
+        ),
+        CheckConstraint(
+            "(status = 'completed') = (next_occurrence_at IS NULL)",
+            name="recurring_rule_completion_shape",
+        ),
+        Index("ix_recurring_rules_owner_id_status", "owner_id", "status"),
+        Index(
+            "ix_recurring_rules_due",
+            "next_occurrence_at",
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    account_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    destination_account_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    category_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(MONEY_PRECISION, MONEY_SCALE), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    tag_ids: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    frequency: Mapped[str] = mapped_column(String(16), nullable=False)
+    starts_on: Mapped[date] = mapped_column(Date, nullable=False)
+    local_time: Mapped[time] = mapped_column(Time(timezone=False), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(100), nullable=False)
+    missing_day_policy: Mapped[str] = mapped_column(String(16), nullable=False)
+    catch_up_policy: Mapped[str] = mapped_column(String(16), nullable=False)
+    end_date: Mapped[date | None] = mapped_column(Date)
+    next_occurrence_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    __mapper_args__ = {"version_id_col": version}
+
+
+class OutboxJobModel(Base):
+    __tablename__ = "outbox_jobs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["owner_id", "rule_id"],
+            ["recurring_rules.owner_id", "recurring_rules.id"],
+            name="fk_outbox_jobs_owner_rule_recurring_rules",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "transaction_id"],
+            ["transactions.owner_id", "transactions.id"],
+            name="fk_outbox_jobs_owner_transaction_transactions",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("dedup_key", name="uq_outbox_jobs_dedup_key"),
+        CheckConstraint(
+            "state IN ('pending', 'leased', 'succeeded', 'dead_letter')",
+            name="outbox_job_state",
+        ),
+        CheckConstraint(
+            "attempts >= 0 AND max_attempts > 0 AND attempts <= max_attempts",
+            name="outbox_job_attempts",
+        ),
+        CheckConstraint("char_length(dedup_key) > 0", name="outbox_job_dedup_key"),
+        CheckConstraint(
+            "(state = 'leased' AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL) OR "
+            "(state <> 'leased' AND lease_owner IS NULL AND lease_expires_at IS NULL)",
+            name="outbox_job_lease_shape",
+        ),
+        CheckConstraint(
+            "(state = 'succeeded') = (transaction_id IS NOT NULL)",
+            name="outbox_job_result_shape",
+        ),
+        Index("ix_outbox_jobs_owner_id_state", "owner_id", "state"),
+        Index("ix_outbox_jobs_claim", "state", "available_at", "lease_expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    rule_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    occurrence_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    dedup_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("5"))
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    lease_owner: Mapped[str | None] = mapped_column(String(160))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    transaction_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
 
 
 class SchemaMetadataModel(Base):

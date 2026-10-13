@@ -4,57 +4,63 @@
 
 ## Текущее состояние
 
-- Стадия: завершён `04 — Accounts, categories и ledger API`; API/contract gate зелёный.
-- Реализация: accounts с opening-balance posting, category groups/categories/tags,
-  income/expense/transfer/adjustment/reversal, filters, snapshot cursor pagination и UTF-8
-  CSV export доступны под `/api/v1`; revisions `20261013_0004`–`0005` применены.
-- Следующий этап: `05 — Scheduling`; не начат и требует отдельного явного запроса.
+- Стадия: завершён `05 — Scheduling`; worker/reliability gate зелёный.
+- Реализация: recurring income/expense/transfer rules, UTC occurrences из wall-clock IANA
+  schedules, PostgreSQL outbox с lease/backoff/dead-letter и owner-scoped management API
+  доступны под `/api/v1`; revisions `20261013_0006`–`0007` применены.
+- Следующий этап: `06 — Deposits`; не начат и требует отдельного явного запроса.
 - Host global toolchain из снимка этапа 00 всё ещё может отличаться от baseline; repository
   gate подтверждён в Python 3.12.12 environment, pnpm 12.12.1 и закреплённых containers.
 - LLM не входит в core startup; local-vLLM остаётся задачей этапа 09.
 
-## Готово в этапе 04
+## Готово в этапе 05
 
-- Все пользовательские reads/writes owner-scoped; чужие account/transaction IDs дают
-  одинаковый `404`. Cookie-authenticated mutations сохраняют session-bound CSRF gate.
-- Все create и reversal commands требуют `Idempotency-Key`. Owner/scope/key advisory lock
-  сериализует concurrent duplicates: одинаковый canonical payload возвращает тот же resource,
-  другой payload получает `409 idempotency_conflict`.
-- Opening balance и ручная сверка — immutable double-entry `adjustment` через скрытый
-  owner/currency-scoped `system_equity`; system accounts не попадают в пользовательский list.
-- Income, expense и transfer дают детерминированные postings; balances всегда перестраиваются
-  из postings. Reversal полностью инвертирует original и сохраняет causal links.
-- Account archive не удаляет историю и блокирует новые postings; DELETE для posted transaction
-  отсутствует, а DB triggers защищают transaction, postings, source и transaction tags.
-- Journal поддерживает account/category/tag/kind/date/search filters и snapshot keyset cursor
-  по `(occurred_at, id)`, устойчивый даже к backdated insert между страницами.
-- CSV формируется как UTF-8 с BOM/CRLF, RFC 4180 escaping и spreadsheet-formula hardening.
-- Pydantic принимает money только как decimal string + currency; float/implicit rounding
-  отклоняются. OpenAPI содержит examples/problem details и зафиксирован snapshot.
-- Детерминированный generator создаёт typed TypeScript fetch-client; CI `--check` запрещает
-  drift между приложением, `docs/openapi.json` и generated source. UI не добавлялся.
-- ADR-013 фиксирует adjustment, concurrency/idempotency, pagination и contract generation.
+- `recurring_rules` поддерживают income/expense/transfer, daily/weekly/monthly/yearly,
+  pause/resume, inclusive end date, optimistic version и вычисляемый `next_occurrence_at`.
+- Чистый domain calendar сохраняет monthly/yearly anchor. Несуществующий день обрабатывается
+  явной policy `last_day`/`skip`; DST gap сдвигается вперёд, fold выбирает первый instant.
+  Все persisted occurrences нормализованы в UTC.
+- Catch-up policy `all` материализует каждый пропуск по одному за scheduler pass; `latest`
+  создаёт только последний due occurrence. Preview возвращает UTC/local occurrences без
+  записи rule, outbox, audit или ledger.
+- Scheduler атомарно выбирает due rules через `FOR UPDATE SKIP LOCKED`, пишет immutable
+  operation snapshot в `outbox_jobs` с уникальным dedup key `(rule_id, occurrence_at)` и
+  двигает next occurrence.
+- Worker claim использует `FOR UPDATE SKIP LOCKED`, 30-секундный lease, attempts, backoff
+  5/10/20/40 секунд и `dead_letter` после пятой ошибки. Истёкший lease безопасно забирается
+  конкурирующим worker.
+- Job вызывает тот же `LedgerService`, что HTTP API, с source `recurring` и детерминированным
+  idempotency key. Crash между ledger commit и job acknowledgement приводит к replay той же
+  transaction, а не к дублю.
+- API публикует create/list/get/update/pause/resume rules, preview, owner-scoped dead-letter
+  list и аудируемый retry. Cross-owner IDs остаются неразличимым `404`.
+- Редактирование rule влияет только на ещё не материализованные occurrences; созданные
+  transactions и outbox snapshots не переписываются.
+- ADR-014 фиксирует outbox/calendar semantics. `docs/SCHEDULING_RUNBOOK.md` описывает
+  мониторинг, диагностику lease/backlog и единственную безопасную процедуру ручного retry.
 
-## Проверки этапа 04
+## Проверки этапа 05
 
-- Backend: Poetry lock, Ruff lint/format и strict mypy — зелёные; `56 passed`, total coverage
-  `87.81%`.
-- PostgreSQL integration: clean upgrade/downgrade, metadata drift, six-way concurrent replay,
-  duplicate-key conflict, cross-owner ID isolation, category grouping, posting/balance,
-  immutable tags, snapshot pagination и CSV escaping/encoding — зелёные.
-- Contract: checked-in OpenAPI snapshot совпадает с app schema; generated TypeScript client
-  current. Money schema имеет string amount и examples; posted DELETE отсутствует.
+- Backend: Poetry lock, Ruff lint/format и strict mypy — зелёные; `68 passed`, total coverage
+  `86.80%`.
+- PostgreSQL integration: clean upgrade/downgrade, metadata drift, crash-after-commit,
+  double delivery, два worker/`SKIP LOCKED`, `all`/`latest` catch-up, dead-letter/audit retry,
+  rule edit immutability и cross-owner API isolation — зелёные.
+- Calendar: month-end `last_day`/`skip`, leap year, DST gap/fold и inclusive end date —
+  зелёные без ожидания реального времени; все clocks инъецируемы.
+- Contract: checked-in OpenAPI snapshot и generated TypeScript client current; scheduling,
+  preview и dead-letter paths проверены.
 - Frontend regression gate: ESLint, Prettier, TypeScript — зелёные; `8 passed`, coverage
   `100%`; production build — зелёный.
 - Compose: backend/web пересобраны; PostgreSQL/API/worker/web healthy, Alembic
-  `20261013_0005 (head)`; `/health/ready`, accounts и CSV OpenAPI paths подтверждены smoke.
+  `20261013_0007 (head)`; recurring OpenAPI paths подтверждены smoke-test.
 
 ## Открытые продуктовые решения
 
 - Базовая валюта и часовой пояс первого пользователя задаются в onboarding, а не фиксируются
   заранее.
 - Межвалютный transfer пока запрещён; будущая модель должна хранить две явные суммы и курс.
-- Трёхбуквенный код валюты, не входящий в встроенный список 0/3-decimal исключений, временно
+- Трёхбуквенный код валюты, не входящий во встроенный список 0/3-decimal исключений, временно
   получает 2 minor units; полноценный versioned currency catalog требует отдельного решения.
 - Юрисдикция и налоговые правила не предполагаются; параметры вводит пользователь.
 - Конкретный SMTP-провайдер выбирается перед публичным развёртыванием.
@@ -70,3 +76,4 @@
 | 02 Domain & DB | завершён | `feat(02): establish audited financial domain` | 35 backend tests, property/integration, migration up/down, Compose |
 | 03 Identity | завершён | `feat(03): secure identity and tenant isolation` | 50 backend tests, 89.67%, security matrix, migration, Compose |
 | 04 Ledger API | завершён | `feat(04): expose idempotent ledger API` | 56 backend tests, generated client drift, 8 frontend tests, Compose |
+| 05 Scheduling | завершён | `feat(05): process recurring operations reliably` | 68 backend tests, 86.80%, worker concurrency/replay, 8 frontend tests, Compose |

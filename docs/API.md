@@ -1,4 +1,4 @@
-# API contract through milestone 04
+# API contract through milestone 05
 
 FastAPI публикует актуальную OpenAPI-схему по `/openapi.json` и интерактивную документацию
 по `/docs`. Зафиксированный snapshot находится в `docs/openapi.json`; из него
@@ -67,6 +67,34 @@ filters без cursor/limit. Поля с запятыми, кавычками и
 JSON number, включая `1250.0`, отклоняется с `422 validation_error`. Сервер не выполняет
 неявное округление и проверяет minor units валюты. Межвалютный transfer возвращает domain
 validation error; скрытого FX нет.
+
+## Recurring rules
+
+Все пути требуют access cookie; mutations также требуют `X-CSRF-Token`.
+
+| Method | Path | Result |
+|---|---|---|
+| `POST`, `GET` | `/recurring-rules` | создать/list owner-scoped rules |
+| `GET`, `PUT` | `/recurring-rules/{id}` | получить или полностью обновить rule по `version` |
+| `POST` | `/recurring-rules/{id}/pause` | приостановить, сохранив next occurrence |
+| `POST` | `/recurring-rules/{id}/resume` | возобновить с выбранной catch-up policy |
+| `POST` | `/recurring-rules/preview` | вычислить 1–100 будущих UTC/local occurrences без записи rule или ledger |
+| `GET` | `/recurring-jobs/dead-letter` | owner-scoped jobs после исчерпания attempts |
+| `POST` | `/recurring-jobs/{id}/retry` | аудируемый безопасный retry dead-letter job |
+
+Операция rule имеет kind `income`, `expense` или `transfer`, exact decimal `money`, ссылки на
+account/category/destination, description и tags. Расписание задаётся local `starts_on` +
+`local_time`, IANA `timezone`, frequency `daily|weekly|monthly|yearly`, optional inclusive
+`end_date`, `missing_day_policy=last_day|skip` и `catch_up_policy=all|latest`.
+
+`next_occurrence_at` и preview `occurrence_at` всегда UTC instants. `local_at` показывает
+соответствующий offset пользователя. На DST gap local time сдвигается вперёд на размер gap;
+при повторённом времени выбирается первый instant. `all` догоняет каждый пропуск, `latest`
+создаёт только последний due occurrence. Уже материализованный job хранит snapshot, поэтому
+редактирование rule действует только на ещё не материализованные события.
+
+Preview является чистым query: он не создаёт rule, outbox job, transaction или audit event.
+Ручной retry описан в [SCHEDULING_RUNBOOK.md](SCHEDULING_RUNBOOK.md).
 
 ### Пример account с opening balance
 

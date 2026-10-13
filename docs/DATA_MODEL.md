@@ -1,6 +1,6 @@
 # Модель данных
 
-Этап 02 реализует double-entry ledger как единственный источник фактических остатков.
+Этапы 02–05 реализуют double-entry ledger как единственный источник фактических остатков.
 Проведённая операция неизменяема; исправление — новая reversal transaction с причинными
 ссылками. В таблицах нет доверенного «UI balance»: любой остаток перестраивается суммой
 `postings.amount`.
@@ -16,6 +16,8 @@ erDiagram
     USERS ||--o{ TRANSACTIONS : owns
     USERS ||--o{ AUDIT_EVENTS : owns
     USERS ||--o{ IDEMPOTENCY_RECORDS : owns
+    USERS ||--o{ RECURRING_RULES : owns
+    USERS ||--o{ OUTBOX_JOBS : owns
     CATEGORY_GROUPS o|--o{ CATEGORY_GROUPS : parent
     CATEGORY_GROUPS o|--o{ CATEGORIES : groups
     CATEGORIES o|--o{ TRANSACTIONS : classifies
@@ -25,6 +27,8 @@ erDiagram
     POSTINGS o|--o| POSTINGS : reverses
     TRANSACTIONS ||--o{ TRANSACTION_TAGS : tagged
     TAGS ||--o{ TRANSACTION_TAGS : labels
+    RECURRING_RULES ||--o{ OUTBOX_JOBS : materializes
+    TRANSACTIONS o|--o| OUTBOX_JOBS : completes
 
     USERS {
         uuid id PK
@@ -79,6 +83,32 @@ erDiagram
         char64 request_hash
         uuid resource_id
     }
+    RECURRING_RULES {
+        uuid id PK
+        uuid owner_id FK
+        varchar kind
+        numeric_38_9 amount
+        varchar frequency
+        date starts_on
+        time local_time
+        varchar timezone
+        timestamptz next_occurrence_at
+        varchar status
+        integer version
+    }
+    OUTBOX_JOBS {
+        uuid id PK
+        uuid owner_id FK
+        uuid rule_id FK
+        timestamptz occurrence_at
+        varchar dedup_key UK
+        jsonb payload
+        varchar state
+        integer attempts
+        timestamptz available_at
+        timestamptz lease_expires_at
+        uuid transaction_id FK
+    }
 ```
 
 Этап 03 расширяет `users` состоянием `active/disabled` и единственным `is_master`, а также
@@ -90,7 +120,8 @@ Refresh и email-token consumption выполняются под row lock; TTL, 
 
 Finance включает `accounts`, `category_groups`, `categories`, `tags`, `transactions`,
 `postings`, `transaction_tags`. Control включает append-only `audit_events`, append-only
-`idempotency_records` и глобальную `schema_metadata`.
+`idempotency_records`, `recurring_rules`, durable `outbox_jobs` и глобальную
+`schema_metadata`.
 
 ## Точность и время
 
@@ -122,6 +153,20 @@ Finance включает `accounts`, `category_groups`, `categories`, `tags`, `t
 8. Mutable справочники и accounts используют optimistic `version`; stale update отклоняется.
 9. Audit и idempotency rows append-only. Ключ идемпотентности уникален в
    `(owner_id, scope, idempotency_key)` и связан с SHA-256-shaped request hash.
+
+## Scheduling invariants
+
+1. Rule принадлежит одному owner; account/category/destination защищены составными owner FK.
+2. Wall-clock anchor хранится отдельно от `next_occurrence_at`: календарь считается в IANA
+   timezone, а occurrence персистится как UTC `TIMESTAMPTZ`.
+3. `(rule_id, occurrence_at)` кодируется в уникальный `outbox_jobs.dedup_key`. Job хранит
+   immutable snapshot operation, поэтому последующее редактирование rule не меняет доставку.
+4. Scheduler и worker выбирают строки через `FOR UPDATE SKIP LOCKED`; claim устанавливает
+   lease owner/expiry и увеличивает attempts.
+5. States: `pending → leased → succeeded`; ошибка возвращает `pending` с exponential backoff
+   или переводит в `dead_letter`. `succeeded` обязан ссылаться на ledger transaction.
+6. Ledger idempotency key совпадает с outbox dedup key. Crash после transaction commit до
+   job acknowledgement приводит к replay той же transaction, а не к новой проводке.
 
 ## Знак и примеры проводок
 
@@ -159,7 +204,7 @@ scope, составных owner FK и integration tests с двумя владе
 
 ## Миграции и downgrade
 
-`20261013_0005` применяется на чистую БД и проверяется `alembic check`. Downgrade до
+`20261013_0007` применяется на чистую БД и проверяется `alembic check`. Downgrade до
 `20261013_0001` удаляет финансовую схему и поэтому тестируется только на пустой disposable
 database. Для БД с реальными данными такой downgrade разрушителен и не является рабочей
 процедурой отката; используется forward fix/backup restore.
