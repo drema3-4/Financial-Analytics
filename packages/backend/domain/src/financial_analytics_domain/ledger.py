@@ -39,6 +39,7 @@ class TransactionKind(StrEnum):
     EXPENSE = "expense"
     TRANSFER = "transfer"
     ADJUSTMENT = "adjustment"
+    INTEREST = "interest"
     REVERSAL = "reversal"
 
 
@@ -127,6 +128,7 @@ class Transaction:
     version: int = 1
     source: str = "manual"
     tag_ids: tuple[UUID, ...] = ()
+    deposit_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if len(self.postings) < 2:
@@ -147,7 +149,19 @@ class Transaction:
             if self.category_id is None:
                 raise DomainError("income and expense require a category")
         elif self.category_id is not None:
-            raise DomainError("transfer, adjustment, and reversal do not carry a category")
+            raise DomainError(
+                "transfer, adjustment, interest, and reversal do not carry a category"
+            )
+        if self.kind is TransactionKind.INTEREST and self.deposit_id is None:
+            raise DomainError("deposit interest requires a deposit link")
+        if self.deposit_id is not None and self.kind not in {
+            TransactionKind.TRANSFER,
+            TransactionKind.INTEREST,
+            TransactionKind.REVERSAL,
+        }:
+            raise DomainError(
+                "only deposit cashflows, interest, and reversals carry a deposit link"
+            )
         if self.version < 1:
             raise DomainError("transaction version must be positive")
         if not self.source.strip() or len(self.source) > 32:
@@ -181,6 +195,7 @@ class Transaction:
         description: str = "",
         entry_source: str = "manual",
         tag_ids: Sequence[UUID] = (),
+        deposit_id: UUID | None = None,
     ) -> Transaction:
         cls._same_owner(owner_id, source, destination)
         if source.id == destination.id:
@@ -202,6 +217,7 @@ class Transaction:
             description=description,
             source=entry_source,
             tag_ids=tuple(tag_ids),
+            deposit_id=deposit_id,
             postings=(
                 Posting(first, id, source.id, -amount),
                 Posting(second, id, destination.id, amount),
@@ -333,6 +349,47 @@ class Transaction:
         )
 
     @classmethod
+    def deposit_interest(
+        cls,
+        *,
+        id: UUID,
+        owner_id: UUID,
+        deposit_id: UUID,
+        principal_account: Account,
+        income_account: Account,
+        amount: Money,
+        occurred_at: Instant,
+        posting_ids: Sequence[UUID],
+        description: str,
+    ) -> Transaction:
+        cls._same_owner(owner_id, principal_account, income_account)
+        if principal_account.kind is not AccountKind.DEPOSIT:
+            raise DomainError("deposit interest requires a deposit principal account")
+        if income_account.kind is not AccountKind.SYSTEM_INCOME:
+            raise DomainError("deposit interest requires a system income account")
+        if principal_account.currency != income_account.currency:
+            raise CurrencyMismatchError("deposit interest accounts must share a currency")
+        if amount.currency != principal_account.currency or amount.amount == 0:
+            raise DomainError("deposit interest amount must be non-zero in deposit currency")
+        if not description.strip():
+            raise DomainError("deposit interest description must not be empty")
+        first, second = _two_posting_ids(posting_ids)
+        return cls(
+            id=id,
+            owner_id=owner_id,
+            kind=TransactionKind.INTEREST,
+            currency=principal_account.currency,
+            occurred_at=occurred_at,
+            description=description,
+            source="deposit_interest",
+            deposit_id=deposit_id,
+            postings=(
+                Posting(first, id, principal_account.id, amount),
+                Posting(second, id, income_account.id, -amount),
+            ),
+        )
+
+    @classmethod
     def reversal(
         cls,
         *,
@@ -373,6 +430,7 @@ class Transaction:
             reversal_of_id=original.id,
             source=entry_source,
             tag_ids=original.tag_ids,
+            deposit_id=original.deposit_id,
         )
 
 

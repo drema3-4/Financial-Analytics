@@ -227,6 +227,98 @@ class AccountModel(Base):
     __mapper_args__ = {"version_id_col": version}
 
 
+class DepositTermsModel(Base):
+    __tablename__ = "deposit_terms"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id", name="uq_deposit_terms_owner_id_id"),
+        ForeignKeyConstraint(
+            ["owner_id", "principal_account_id", "currency"],
+            ["accounts.owner_id", "accounts.id", "accounts.currency"],
+            name="fk_deposit_terms_owner_account_currency_accounts",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("currency ~ '^[A-Z]{3}$'", name="deposit_terms_currency"),
+        CheckConstraint("matures_on > opened_on", name="deposit_terms_date_order"),
+        CheckConstraint(
+            "capitalization_frequency IN ('daily', 'monthly_calendar_end')",
+            name="deposit_terms_capitalization_frequency",
+        ),
+        CheckConstraint(
+            "day_count_convention IN ('actual_365_fixed', 'actual_actual_isda')",
+            name="deposit_terms_day_count_convention",
+        ),
+        CheckConstraint(
+            "rounding_policy IN ('half_even', 'half_up')",
+            name="deposit_terms_rounding_policy",
+        ),
+        CheckConstraint(
+            "interest_rounding_frequency IN ('daily', 'capitalization')",
+            name="deposit_terms_interest_rounding_frequency",
+        ),
+        CheckConstraint(
+            "early_close_policy IN ('forbid', 'forfeit_interest', 'reprice')",
+            name="deposit_terms_early_close_policy",
+        ),
+        CheckConstraint(
+            "(early_close_policy = 'reprice') = (early_close_rate IS NOT NULL)",
+            name="deposit_terms_early_close_rate_shape",
+        ),
+        CheckConstraint("early_close_rate >= 0", name="deposit_terms_early_close_rate"),
+        CheckConstraint("tax_rate >= 0 AND tax_rate < 1", name="deposit_terms_tax_rate"),
+        CheckConstraint("char_length(timezone) BETWEEN 1 AND 100", name="deposit_terms_timezone"),
+        CheckConstraint(
+            "algorithm_version = 'deposit-interest-v1'",
+            name="deposit_terms_algorithm_version",
+        ),
+        Index("ix_deposit_terms_owner_id_opened_on", "owner_id", "opened_on"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    principal_account_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    opened_on: Mapped[date] = mapped_column(Date, nullable=False)
+    matures_on: Mapped[date] = mapped_column(Date, nullable=False)
+    capitalization_frequency: Mapped[str] = mapped_column(String(32), nullable=False)
+    day_count_convention: Mapped[str] = mapped_column(String(32), nullable=False)
+    rounding_policy: Mapped[str] = mapped_column(String(16), nullable=False)
+    interest_rounding_frequency: Mapped[str] = mapped_column(String(24), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(100), nullable=False)
+    cashflow_cutoff_time: Mapped[time] = mapped_column(Time(timezone=False), nullable=False)
+    cashflow_cutoff_inclusive: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    early_close_policy: Mapped[str] = mapped_column(String(24), nullable=False)
+    early_close_rate: Mapped[Decimal | None] = mapped_column(Numeric(20, 12))
+    tax_rate: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class DepositRatePeriodModel(Base):
+    __tablename__ = "deposit_rate_periods"
+    __table_args__ = (
+        PrimaryKeyConstraint("owner_id", "deposit_id", "starts_on"),
+        ForeignKeyConstraint(
+            ["owner_id", "deposit_id"],
+            ["deposit_terms.owner_id", "deposit_terms.id"],
+            name="fk_deposit_rate_periods_owner_deposit_deposit_terms",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("ends_on > starts_on", name="deposit_rate_periods_date_order"),
+        CheckConstraint("nominal_rate >= 0", name="deposit_rate_periods_nominal_rate"),
+        Index("ix_deposit_rate_periods_owner_id_deposit_id", "owner_id", "deposit_id"),
+    )
+
+    owner_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    deposit_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    starts_on: Mapped[date] = mapped_column(Date, nullable=False)
+    ends_on: Mapped[date] = mapped_column(Date, nullable=False)
+    nominal_rate: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+
+
 class CategoryGroupModel(Base):
     __tablename__ = "category_groups"
     __table_args__ = (
@@ -342,8 +434,14 @@ class TransactionModel(Base):
             name="fk_transactions_owner_id_reversal_of_id_transactions",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["owner_id", "deposit_id"],
+            ["deposit_terms.owner_id", "deposit_terms.id"],
+            name="fk_transactions_owner_id_deposit_id_deposit_terms",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
-            "kind IN ('income', 'expense', 'transfer', 'adjustment', 'reversal')",
+            "kind IN ('income', 'expense', 'transfer', 'adjustment', 'interest', 'reversal')",
             name="transaction_kind",
         ),
         CheckConstraint("status IN ('pending', 'posted')", name="transaction_status"),
@@ -352,10 +450,18 @@ class TransactionModel(Base):
         CheckConstraint(
             "(kind IN ('income', 'expense') AND category_id IS NOT NULL "
             "AND reversal_of_id IS NULL) OR "
-            "(kind IN ('transfer', 'adjustment') AND category_id IS NULL "
+            "(kind IN ('transfer', 'adjustment', 'interest') AND category_id IS NULL "
             "AND reversal_of_id IS NULL) OR "
             "(kind = 'reversal' AND category_id IS NULL AND reversal_of_id IS NOT NULL)",
             name="transaction_shape",
+        ),
+        CheckConstraint(
+            "(kind = 'interest' AND deposit_id IS NOT NULL AND source = 'deposit_interest') OR "
+            "(kind = 'transfer' AND ((deposit_id IS NULL AND source <> 'deposit_cashflow') OR "
+            "(deposit_id IS NOT NULL AND source = 'deposit_cashflow'))) OR "
+            "(kind = 'reversal') OR "
+            "(kind IN ('income', 'expense', 'adjustment') AND deposit_id IS NULL)",
+            name="transaction_deposit_shape",
         ),
         CheckConstraint("version > 0", name="transaction_version"),
         Index(
@@ -376,6 +482,7 @@ class TransactionModel(Base):
     request_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     category_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     reversal_of_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    deposit_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)

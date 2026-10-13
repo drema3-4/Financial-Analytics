@@ -4,14 +4,47 @@
 
 ## Текущее состояние
 
-- Стадия: завершён `05 — Scheduling`; worker/reliability gate зелёный.
-- Реализация: recurring income/expense/transfer rules, UTC occurrences из wall-clock IANA
-  schedules, PostgreSQL outbox с lease/backoff/dead-letter и owner-scoped management API
-  доступны под `/api/v1`; revisions `20261013_0006`–`0007` применены.
-- Следующий этап: `06 — Deposits`; не начат и требует отдельного явного запроса.
+- Стадия: завершён `06 — Deposits`; эталонные таблицы и PostgreSQL gate зелёные.
+- Реализация: immutable deposit terms/rate periods, pure Decimal interest engine, linked ledger
+  cashflows/interest facts, valuation/schedule/effective-yield/reconciliation API доступны под
+  `/api/v1/deposits`; revision `20261013_0008` применена.
+- Следующий этап: `07 — Analytics`; не начат и требует отдельного явного запроса.
 - Host global toolchain из снимка этапа 00 всё ещё может отличаться от baseline; repository
   gate подтверждён в Python 3.12.12 environment, pnpm 12.12.1 и закреплённых containers.
 - LLM не входит в core startup; local-vLLM остаётся задачей этапа 09.
+
+## Готово в этапе 06
+
+- `DepositTerms` связывает owner-scoped principal account и currency с полуоткрытым сроком,
+  непрерывными rate periods, explicit daily/month-end capitalization, Actual/365 Fixed или
+  Actual/Actual ISDA, rounding mode/frequency, IANA timezone/cut-off, early-close rule, tax и
+  алгоритмом `deposit-interest-v1`.
+- Чистый engine считает daily accrual без clock/DB/framework, применяет cashflow до начисления
+  по явному cut-off, поддерживает rate boundary, leap year, tax, `half_even`/`half_up`, partial
+  withdrawal и полный deterministic reprice/forfeit при early close.
+- API публикует create/list/get terms, linked cashflow transfer, factual interest posting и
+  valuation: schedule, current principal/value, accrued interest, projected maturity value,
+  Decimal XIRR effective yield и planned-vs-actual reconciliation.
+- Пополнения/снятия остаются ordinary immutable transfer transactions с `deposit_id`.
+  Фактический bank interest — отдельная double-entry transaction kind `interest`; reversal и
+  новая корректировка не меняют terms или производный план и остаются в audit trail.
+- `deposit_terms`/`deposit_rate_periods` append-only, составные owner/account/deposit FK не
+  допускают cross-tenant links. Repository reads обязательным образом owner-scoped.
+- ADR-015 фиксирует полузакрытые границы, cut-off/rounding/tax/early-close/XIRR semantics;
+  `docs/DEPOSIT_CALCULATIONS.md` документирует формулы и связь плана с ledger fact.
+
+## Проверки этапа 06
+
+- Backend: Ruff lint/format, strict mypy, generated OpenAPI/client drift — зелёные; `75 passed`,
+  total coverage `86.61%`.
+- Эталонные fixtures: независимые CSV terms/rates/cashflows/formulas совпадают до minor-unit
+  rounding для monthly/daily capitalization, cut-off, withdrawal, leap year, rounding, tax,
+  rate boundary и early close; property tests подтверждают deterministic result.
+- PostgreSQL: clean upgrade/check/downgrade и metadata drift зелёные; deposit cashflow,
+  interest correction через reversal, append-only audit и cross-owner `404` проверены.
+- Contract/frontend: все deposit paths и обязательные ambiguous parameters закреплены в
+  OpenAPI; TypeScript client current; ESLint/Prettier/TypeScript зелёные, `8 passed`, frontend
+  coverage `100%`, production build зелёный.
 
 ## Готово в этапе 05
 
@@ -77,3 +110,4 @@
 | 03 Identity | завершён | `feat(03): secure identity and tenant isolation` | 50 backend tests, 89.67%, security matrix, migration, Compose |
 | 04 Ledger API | завершён | `feat(04): expose idempotent ledger API` | 56 backend tests, generated client drift, 8 frontend tests, Compose |
 | 05 Scheduling | завершён | `feat(05): process recurring operations reliably` | 68 backend tests, 86.80%, worker concurrency/replay, 8 frontend tests, Compose |
+| 06 Deposits | завершён | `feat(06): model deposits and compound interest` | 75 backend tests, 86.61%, fixtures/property/integration/contract, 8 frontend tests, Compose |

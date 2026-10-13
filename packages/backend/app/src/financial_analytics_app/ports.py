@@ -12,6 +12,7 @@ from financial_analytics_domain import (
     Category,
     CategoryGroup,
     Currency,
+    DepositTerms,
     Instant,
     Money,
     OutboxJob,
@@ -122,6 +123,8 @@ class LedgerRepository(Protocol):
 
     def list_postings(self, account_id: UUID | None = None) -> tuple[Posting, ...]: ...
 
+    def list_deposit_transactions(self, deposit_id: UUID) -> tuple[Transaction, ...]: ...
+
     def rebuild_balances(self) -> dict[UUID, Money]: ...
 
 
@@ -137,10 +140,19 @@ class IdempotencyRepository(Protocol):
     def add(self, record: IdempotencyRecord) -> None: ...
 
 
+class DepositRepository(Protocol):
+    def add(self, terms: DepositTerms) -> None: ...
+
+    def get(self, deposit_id: UUID) -> DepositTerms | None: ...
+
+    def list(self) -> tuple[DepositTerms, ...]: ...
+
+
 class UnitOfWork(Protocol):
     ledger: LedgerRepository
     audit: AuditRepository
     idempotency: IdempotencyRepository
+    deposits: DepositRepository
 
     def __enter__(self) -> Self: ...
 

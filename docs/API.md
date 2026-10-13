@@ -96,6 +96,29 @@ account/category/destination, description и tags. Расписание зада
 Preview является чистым query: он не создаёт rule, outbox job, transaction или audit event.
 Ручной retry описан в [SCHEDULING_RUNBOOK.md](SCHEDULING_RUNBOOK.md).
 
+## Deposits
+
+Все create/posting команды требуют `Idempotency-Key`, access cookie и CSRF. Все reads и FK
+owner-scoped; чужой UUID неотличим от отсутствующего (`404`).
+
+| Method | Path | Result |
+|---|---|---|
+| `POST`, `GET` | `/deposits` | создать immutable terms или получить owner list |
+| `GET` | `/deposits/{id}` | получить terms и версию алгоритма |
+| `POST` | `/deposits/{id}/cashflows` | linked same-currency transfer: signed пополнение/снятие |
+| `POST` | `/deposits/{id}/interest-postings` | immutable фактический signed interest posting |
+| `GET` | `/deposits/{id}/valuation?as_of=...&close_on=...` | schedule, current/accrued/projected values, effective yield и reconciliation |
+
+Rates и money принимаются только decimal strings. Create требует явные capitalization,
+day-count, rounding mode/frequency, timezone/cut-off/equality rule, early-close rule и tax
+rate; банковских defaults нет. `as_of` обязателен и означает начало local calendar date.
+`close_on` optional и активирует явно заданную early-close policy.
+
+Schedule — расчётный план и не создаёт postings. Cashflow остаётся transaction `transfer` с
+`deposit_id`; банковский процент — отдельная transaction `interest`. Исправление выполняется
+reversal/новой posting, поэтому reconciliation меняется, но план и terms не переписываются.
+Полная семантика и формулы — в [DEPOSIT_CALCULATIONS.md](DEPOSIT_CALCULATIONS.md).
+
 ### Пример account с opening balance
 
 Ниже используются placeholder cookie jar и CSRF token; это не реальные секреты:

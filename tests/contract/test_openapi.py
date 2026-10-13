@@ -96,3 +96,34 @@ def test_openapi_documents_recurring_rules_preview_and_dead_letter_retry() -> No
     assert preview["responses"]["200"]
     retry = schema["paths"]["/api/v1/recurring-jobs/{job_id}/retry"]["post"]
     assert "403" in retry["responses"]
+
+
+def test_openapi_documents_deposit_terms_exact_rates_and_valuation() -> None:
+    settings = Settings(app_env=AppEnvironment.TEST, _env_file=None)
+    schema = create_app(settings).openapi()
+    required_paths = {
+        "/api/v1/deposits",
+        "/api/v1/deposits/{deposit_id}",
+        "/api/v1/deposits/{deposit_id}/cashflows",
+        "/api/v1/deposits/{deposit_id}/interest-postings",
+        "/api/v1/deposits/{deposit_id}/valuation",
+    }
+    assert required_paths <= schema["paths"].keys()
+    create = schema["paths"]["/api/v1/deposits"]["post"]
+    assert create["operationId"] == "createDeposit"
+    request_schema = schema["components"]["schemas"]["CreateDepositRequest"]
+    required = set(request_schema["required"])
+    assert {
+        "capitalization_frequency",
+        "day_count_convention",
+        "rounding_policy",
+        "interest_rounding_frequency",
+        "cashflow_cutoff_time",
+        "cashflow_cutoff_inclusive",
+        "early_close_rule",
+        "tax_rate",
+    } <= required
+    assert schema["components"]["schemas"]["RateInput"]["properties"]["value"]["type"] == ("string")
+    valuation = schema["paths"]["/api/v1/deposits/{deposit_id}/valuation"]["get"]
+    as_of = next(item for item in valuation["parameters"] if item["name"] == "as_of")
+    assert as_of["required"] is True

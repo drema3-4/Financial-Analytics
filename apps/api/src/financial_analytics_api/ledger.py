@@ -304,6 +304,7 @@ class TransactionResponse(ApiModel):
     source: str
     category_id: UUID | None
     reversal_of_id: UUID | None
+    deposit_id: UUID | None
     tag_ids: list[UUID]
     postings: list[PostingResponse]
     version: int
@@ -938,6 +939,7 @@ def _transaction_response(transaction: Transaction) -> TransactionResponse:
         source=transaction.source,
         category_id=transaction.category_id,
         reversal_of_id=transaction.reversal_of_id,
+        deposit_id=transaction.deposit_id,
         tag_ids=list(transaction.tag_ids),
         postings=[_posting_response(posting) for posting in transaction.postings],
         version=transaction.version,

@@ -1,6 +1,6 @@
 # Модель данных
 
-Этапы 02–05 реализуют double-entry ledger как единственный источник фактических остатков.
+Этапы 02–06 реализуют double-entry ledger как единственный источник фактических остатков.
 Проведённая операция неизменяема; исправление — новая reversal transaction с причинными
 ссылками. В таблицах нет доверенного «UI balance»: любой остаток перестраивается суммой
 `postings.amount`.
@@ -18,6 +18,7 @@ erDiagram
     USERS ||--o{ IDEMPOTENCY_RECORDS : owns
     USERS ||--o{ RECURRING_RULES : owns
     USERS ||--o{ OUTBOX_JOBS : owns
+    USERS ||--o{ DEPOSIT_TERMS : owns
     CATEGORY_GROUPS o|--o{ CATEGORY_GROUPS : parent
     CATEGORY_GROUPS o|--o{ CATEGORIES : groups
     CATEGORIES o|--o{ TRANSACTIONS : classifies
@@ -29,6 +30,9 @@ erDiagram
     TAGS ||--o{ TRANSACTION_TAGS : labels
     RECURRING_RULES ||--o{ OUTBOX_JOBS : materializes
     TRANSACTIONS o|--o| OUTBOX_JOBS : completes
+    ACCOUNTS ||--o{ DEPOSIT_TERMS : principal
+    DEPOSIT_TERMS ||--|{ DEPOSIT_RATE_PERIODS : rates
+    DEPOSIT_TERMS o|--o{ TRANSACTIONS : links
 
     USERS {
         uuid id PK
@@ -53,6 +57,7 @@ erDiagram
         varchar source
         uuid category_id FK
         uuid reversal_of_id FK
+        uuid deposit_id FK
         integer version
         timestamptz occurred_at
     }
@@ -109,6 +114,27 @@ erDiagram
         timestamptz lease_expires_at
         uuid transaction_id FK
     }
+    DEPOSIT_TERMS {
+        uuid id PK
+        uuid owner_id FK
+        uuid principal_account_id FK
+        char3 currency
+        date opened_on
+        date matures_on
+        varchar capitalization_frequency
+        varchar day_count_convention
+        varchar rounding_policy
+        varchar early_close_policy
+        numeric_20_12 tax_rate
+        varchar algorithm_version
+    }
+    DEPOSIT_RATE_PERIODS {
+        uuid owner_id PK
+        uuid deposit_id PK
+        date starts_on PK
+        date ends_on
+        numeric_20_12 nominal_rate
+    }
 ```
 
 Этап 03 расширяет `users` состоянием `active/disabled` и единственным `is_master`, а также
@@ -123,6 +149,11 @@ Finance включает `accounts`, `category_groups`, `categories`, `tags`, `t
 `idempotency_records`, `recurring_rules`, durable `outbox_jobs` и глобальную
 `schema_metadata`.
 
+Deposits включает immutable `deposit_terms` и `deposit_rate_periods`. Производный план не
+дублируется в таблице: он воспроизводимо строится из versioned terms и deposit-linked transfer
+transactions. Фактические проценты — ledger transaction kind `interest`; `deposit_id` также
+переносится в reversal.
+
 ## Точность и время
 
 - Сумма posting хранится в `NUMERIC(38, 9)`. Это storage capacity, а не разрешение молча
@@ -130,7 +161,7 @@ Finance включает `accounts`, `category_groups`, `categories`, `tags`, `t
 - `Money` допускает minor units валюты: обычно 2, 0 для JPY-подобных и 3 для
   KWD-подобных кодов. Неизвестный трёхбуквенный код получает 2 знака до появления отдельного
   справочника валют.
-- `Rate` имеет максимум 12 дробных знаков и пока не персистится отдельной таблицей.
+- `Rate` имеет максимум 12 дробных знаков; deposit rates хранятся как `NUMERIC(20, 12)`.
 - Входные `float`, `NaN` и infinity запрещены. Округление выполняется только через явно
   выбранную `HALF_EVEN` или `HALF_UP` policy.
 - Все instants обязаны иметь timezone и нормализуются в UTC; PostgreSQL использует
@@ -146,8 +177,9 @@ Finance включает `accounts`, `category_groups`, `categories`, `tags`, `t
 5. Reversal имеет уникальную ссылку на исходную transaction. Каждая её posting уникально
    ссылается на соответствующую исходную posting и обязана иметь тот же account/currency и
    строго противоположную сумму.
-6. Income/expense требуют category правильного kind. Transfer и reversal не имеют category.
-   Adjustment также не имеет category и балансируется через скрытый `system_equity` account.
+6. Income/expense требуют category правильного kind. Transfer, interest и reversal не имеют
+   category. Adjustment также не имеет category и балансируется через скрытый `system_equity`
+   account. Interest требует `deposit_id` и балансируется через `system_income`.
 7. Межвалютный transfer текущей фабрикой запрещён. Будущая модель FX обязана хранить обе
    явные суммы и курс; скрытого пересчёта нет.
 8. Mutable справочники и accounts используют optimistic `version`; stale update отклоняется.
@@ -168,6 +200,18 @@ Finance включает `accounts`, `category_groups`, `categories`, `tags`, `t
 6. Ledger idempotency key совпадает с outbox dedup key. Crash после transaction commit до
    job acknowledgement приводит к replay той же transaction, а не к новой проводке.
 
+## Deposit invariants
+
+1. Deposit и principal account имеют одного owner/currency; principal account имеет kind
+   `deposit`. Все repository reads owner-scoped.
+2. Terms/rate periods append-only. Rate periods — непересекающиеся полуоткрытые интервалы,
+   без пробелов покрывающие `[opened_on, matures_on)`.
+3. Cashflow — transfer с `deposit_id`; план читает только transfer/reversal principal postings.
+   Interest posting не становится входным cashflow и поэтому не переписывает план.
+4. Фактический interest и его reversal остаются immutable ledger rows и audit events.
+5. Полные формулы, cut-off, day-count, rounding, tax, early-close и XIRR описаны в
+   [DEPOSIT_CALCULATIONS.md](DEPOSIT_CALCULATIONS.md).
+
 ## Знак и примеры проводок
 
 Положительная posting увеличивает баланс account, отрицательная уменьшает. System-side
@@ -183,6 +227,8 @@ accounts принадлежат тому же owner и имеют kind `system_i
 |  | `cash` | `+200.00` |
 | Reversal расхода | `bank` | `+125.25`, ссылка на исходную posting |
 |  | `system_expense` | `-125.25`, ссылка на исходную posting |
+| Факт процентов вклада 3 USD | `deposit` | `+3.00`, `deposit_id` |
+|  | `system_income` | `-3.00`, `deposit_id` transaction |
 
 После дохода, расхода, перевода и reversal расхода: `bank = 800.00`, `cash = 200.00`,
 `system_income = -1000.00`, `system_expense = 0.00`. Результат получается только из postings.
@@ -204,7 +250,7 @@ scope, составных owner FK и integration tests с двумя владе
 
 ## Миграции и downgrade
 
-`20261013_0007` применяется на чистую БД и проверяется `alembic check`. Downgrade до
+`20261013_0008` применяется на чистую БД и проверяется `alembic check`. Downgrade до
 `20261013_0001` удаляет финансовую схему и поэтому тестируется только на пустой disposable
 database. Для БД с реальными данными такой downgrade разрушителен и не является рабочей
 процедурой отката; используется forward fix/backup restore.

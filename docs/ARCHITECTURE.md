@@ -92,7 +92,7 @@ Advice orchestrator получает `AdviceContext`: агрегаты, цели
 | Profile | `profiles`, `user_preferences` |
 | Finance | `accounts`, `transactions`, `postings`, `categories`, `category_groups`, `tags`, `transaction_tags` |
 | Scheduling | `recurring_rules`, `recurring_occurrences`, `jobs` |
-| Deposits | `deposit_terms`, `deposit_rate_periods`, `interest_accruals` |
+| Deposits | `deposit_terms`, `deposit_rate_periods`; plan вычисляется, fact хранится в linked ledger transactions |
 | Planning | `forecast_scenarios`, `forecast_runs`, `goals`, `goal_allocations` |
 | AI | `advice_requests`, `advice_results`, `llm_consents` |
 | Control | `audit_events`, `idempotency_keys`, `outbox_events`, `schema_metadata` |

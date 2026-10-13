@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from financial_analytics_app.ports import (
     AuditEvent,
     AuditRepository,
+    DepositRepository,
     IdempotencyRecord,
     IdempotencyRepository,
     LedgerRepository,
@@ -26,13 +27,22 @@ from financial_analytics_app.services import ConcurrentModificationError
 from financial_analytics_domain import (
     Account,
     AccountKind,
+    CapitalizationFrequency,
     Category,
     CategoryGroup,
     CategoryKind,
     Currency,
+    DayCountConvention,
+    DepositRatePeriod,
+    DepositTerms,
+    EarlyClosePolicy,
+    EarlyCloseRule,
     Instant,
+    InterestRoundingFrequency,
     Money,
     Posting,
+    Rate,
+    RoundingPolicy,
     Tag,
     Transaction,
     TransactionKind,
@@ -43,6 +53,8 @@ from financial_analytics_infra.models import (
     AuditEventModel,
     CategoryGroupModel,
     CategoryModel,
+    DepositRatePeriodModel,
+    DepositTermsModel,
     IdempotencyRecordModel,
     PostingModel,
     TagModel,
@@ -334,6 +346,7 @@ class PostgresLedgerRepository:
             request_id=request_id,
             category_id=transaction.category_id,
             reversal_of_id=transaction.reversal_of_id,
+            deposit_id=transaction.deposit_id,
             kind=transaction.kind.value,
             status="pending",
             currency=transaction.currency.code,
@@ -522,6 +535,24 @@ class PostgresLedgerRepository:
             query = query.where(PostingModel.account_id == account_id)
         return tuple(_posting_from_row(row) for row in self._session.scalars(query))
 
+    def list_deposit_transactions(self, deposit_id: UUID) -> tuple[Transaction, ...]:
+        transaction_ids = self._session.scalars(
+            select(TransactionModel.id)
+            .where(
+                TransactionModel.owner_id == self._owner_id,
+                TransactionModel.deposit_id == deposit_id,
+                TransactionModel.status == "posted",
+            )
+            .order_by(TransactionModel.occurred_at, TransactionModel.id)
+        )
+        result: list[Transaction] = []
+        for transaction_id in transaction_ids:
+            transaction = self.get_transaction(transaction_id)
+            if transaction is None:
+                raise RuntimeError("posted deposit transaction disappeared")
+            result.append(transaction)
+        return tuple(result)
+
     def rebuild_balances(self) -> dict[UUID, Money]:
         accounts = self._session.execute(
             select(AccountModel.id, AccountModel.currency).where(
@@ -619,10 +650,86 @@ class PostgresIdempotencyRepository:
         )
 
 
+class PostgresDepositRepository:
+    def __init__(self, session: Session, owner_id: UUID) -> None:
+        self._session = session
+        self._owner_id = owner_id
+
+    def add(self, terms: DepositTerms) -> None:
+        if terms.owner_id != self._owner_id:
+            raise OwnershipError("deposit is outside repository scope")
+        self._session.add(
+            DepositTermsModel(
+                id=terms.id,
+                owner_id=terms.owner_id,
+                principal_account_id=terms.principal_account_id,
+                currency=terms.currency.code,
+                opened_on=terms.opened_on,
+                matures_on=terms.matures_on,
+                capitalization_frequency=terms.capitalization_frequency.value,
+                day_count_convention=terms.day_count_convention.value,
+                rounding_policy=terms.rounding_policy.value,
+                interest_rounding_frequency=terms.interest_rounding_frequency.value,
+                timezone=terms.timezone,
+                cashflow_cutoff_time=terms.cashflow_cutoff_time,
+                cashflow_cutoff_inclusive=terms.cashflow_cutoff_inclusive,
+                early_close_policy=terms.early_close_rule.policy.value,
+                early_close_rate=(
+                    None
+                    if terms.early_close_rule.nominal_rate is None
+                    else terms.early_close_rule.nominal_rate.value
+                ),
+                tax_rate=terms.tax_rate.value,
+                algorithm_version=terms.algorithm_version,
+            )
+        )
+        self._session.flush()
+        self._session.add_all(
+            [
+                DepositRatePeriodModel(
+                    owner_id=terms.owner_id,
+                    deposit_id=terms.id,
+                    starts_on=period.starts_on,
+                    ends_on=period.ends_on,
+                    nominal_rate=period.nominal_rate.value,
+                )
+                for period in terms.rate_periods
+            ]
+        )
+
+    def get(self, deposit_id: UUID) -> DepositTerms | None:
+        row = self._session.scalar(
+            select(DepositTermsModel).where(
+                DepositTermsModel.owner_id == self._owner_id,
+                DepositTermsModel.id == deposit_id,
+            )
+        )
+        if row is None:
+            return None
+        periods = self._session.scalars(
+            select(DepositRatePeriodModel)
+            .where(
+                DepositRatePeriodModel.owner_id == self._owner_id,
+                DepositRatePeriodModel.deposit_id == deposit_id,
+            )
+            .order_by(DepositRatePeriodModel.starts_on)
+        )
+        return _deposit_from_rows(row, tuple(periods))
+
+    def list(self) -> tuple[DepositTerms, ...]:
+        ids = self._session.scalars(
+            select(DepositTermsModel.id)
+            .where(DepositTermsModel.owner_id == self._owner_id)
+            .order_by(DepositTermsModel.opened_on, DepositTermsModel.id)
+        )
+        return tuple(terms for deposit_id in ids if (terms := self.get(deposit_id)) is not None)
+
+
 class PostgresUnitOfWork:
     ledger: LedgerRepository
     audit: AuditRepository
     idempotency: IdempotencyRepository
+    deposits: DepositRepository
 
     def __init__(self, session_factory: sessionmaker[Session], owner_id: UUID) -> None:
         self._session = session_factory()
@@ -630,6 +737,7 @@ class PostgresUnitOfWork:
         self.ledger = PostgresLedgerRepository(self._session, owner_id)
         self.audit = PostgresAuditRepository(self._session, owner_id)
         self.idempotency = PostgresIdempotencyRepository(self._session, owner_id)
+        self.deposits = PostgresDepositRepository(self._session, owner_id)
 
     def __enter__(self) -> PostgresUnitOfWork:
         return self
@@ -729,4 +837,40 @@ def _transaction_from_rows(
         version=row.version,
         source=row.source,
         tag_ids=tuple(tag_ids),
+        deposit_id=row.deposit_id,
+    )
+
+
+def _deposit_from_rows(
+    row: DepositTermsModel,
+    period_rows: Sequence[DepositRatePeriodModel],
+) -> DepositTerms:
+    return DepositTerms(
+        id=row.id,
+        owner_id=row.owner_id,
+        principal_account_id=row.principal_account_id,
+        currency=Currency(row.currency),
+        opened_on=row.opened_on,
+        matures_on=row.matures_on,
+        rate_periods=tuple(
+            DepositRatePeriod(
+                starts_on=period.starts_on,
+                ends_on=period.ends_on,
+                nominal_rate=Rate.of(period.nominal_rate),
+            )
+            for period in period_rows
+        ),
+        capitalization_frequency=CapitalizationFrequency(row.capitalization_frequency),
+        day_count_convention=DayCountConvention(row.day_count_convention),
+        rounding_policy=RoundingPolicy(row.rounding_policy),
+        interest_rounding_frequency=InterestRoundingFrequency(row.interest_rounding_frequency),
+        timezone=row.timezone,
+        cashflow_cutoff_time=row.cashflow_cutoff_time,
+        cashflow_cutoff_inclusive=row.cashflow_cutoff_inclusive,
+        early_close_rule=EarlyCloseRule(
+            EarlyClosePolicy(row.early_close_policy),
+            None if row.early_close_rate is None else Rate.of(row.early_close_rate),
+        ),
+        tax_rate=Rate.of(row.tax_rate),
+        algorithm_version=row.algorithm_version,
     )

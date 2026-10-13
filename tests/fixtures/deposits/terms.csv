@@ -1,0 +1,10 @@
+case,opened_on,matures_on,as_of,close_on,capitalization,day_count,rounding,rounding_frequency,timezone,cutoff,cutoff_inclusive,early_policy,early_rate,tax_rate,expected_current_principal,expected_accrued_interest,expected_current_value,expected_closing_value
+monthly_tax,2024-01-01,2024-03-01,2024-02-15,,monthly_calendar_end,actual_365_fixed,half_up,capitalization,UTC,12:00:00,true,forbid,,0.13,1008.87,4.04,1012.91,1017.24
+daily_capitalization,2024-01-01,2024-01-04,2024-01-03,,daily,actual_365_fixed,half_up,daily,UTC,12:00:00,true,forbid,,0,1000.54,0.00,1000.54,1000.81
+cutoff_boundary,2024-01-01,2024-01-04,2024-01-03,,monthly_calendar_end,actual_365_fixed,half_up,capitalization,UTC,12:00:00,true,forbid,,0,1100.00,2.10,1102.10,1203.30
+partial_withdrawal,2024-01-01,2024-01-05,2024-01-04,,monthly_calendar_end,actual_365_fixed,half_up,capitalization,UTC,12:00:00,true,forbid,,0,800.00,2.80,802.80,803.60
+leap_year,2023-12-31,2024-01-02,2024-01-01,,monthly_calendar_end,actual_actual_isda,half_up,capitalization,UTC,12:00:00,true,forbid,,0,1001.00,0.00,1001.00,1002.00
+round_half_even,2024-01-01,2024-01-02,2024-01-02,,daily,actual_365_fixed,half_even,daily,UTC,12:00:00,true,forbid,,0,1.00,0.00,1.00,1.00
+round_half_up,2024-01-01,2024-01-02,2024-01-02,,daily,actual_365_fixed,half_up,daily,UTC,12:00:00,true,forbid,,0,1.01,0.00,1.01,1.01
+early_close,2024-01-01,2024-01-11,2024-01-06,2024-01-06,monthly_calendar_end,actual_365_fixed,half_up,capitalization,UTC,12:00:00,true,reprice,0.0365,0,1000.00,0.50,1000.50,1000.50
+rate_boundary,2024-01-01,2024-01-05,2024-01-03,,monthly_calendar_end,actual_365_fixed,half_up,capitalization,UTC,12:00:00,true,forbid,,0,1000.00,2.00,1002.00,1006.00

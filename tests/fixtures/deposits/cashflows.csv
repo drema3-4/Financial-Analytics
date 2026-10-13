@@ -1,0 +1,13 @@
+case,occurred_at,amount,note
+monthly_tax,2024-01-01T09:00:00+00:00,1000.00,opening funding before cut-off
+daily_capitalization,2024-01-01T09:00:00+00:00,1000.00,opening funding
+cutoff_boundary,2024-01-01T09:00:00+00:00,1000.00,opening funding
+cutoff_boundary,2024-01-02T11:59:00+00:00,100.00,before cut-off effective Jan 2
+cutoff_boundary,2024-01-02T12:01:00+00:00,100.00,after cut-off effective Jan 3
+partial_withdrawal,2024-01-01T09:00:00+00:00,1000.00,opening funding
+partial_withdrawal,2024-01-03T10:00:00+00:00,-200.00,partial withdrawal before cut-off
+leap_year,2023-12-31T09:00:00+00:00,1000.00,opening funding across year boundary
+round_half_even,2024-01-01T09:00:00+00:00,1.00,exact half-cent interest
+round_half_up,2024-01-01T09:00:00+00:00,1.00,exact half-cent interest
+early_close,2024-01-01T09:00:00+00:00,1000.00,opening funding repriced on close
+rate_boundary,2024-01-01T09:00:00+00:00,1000.00,opening funding across rate boundary

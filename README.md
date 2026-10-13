@@ -175,11 +175,12 @@ pnpm --filter @financial-analytics/web exec vite --host 127.0.0.1
 docker compose config --quiet
 ```
 
-Revisions `20261013_0004`–`0007` добавляют Ledger API и recurring rules/outbox. CI проверяет
+Revisions `20261013_0004`–`0008` добавляют Ledger API, recurring rules/outbox и deposits. CI проверяет
 upgrade на чистой PostgreSQL database, отсутствие drift между SQLAlchemy metadata и Alembic,
 integration tests и downgrade до пустого bootstrap revision. Полная схема и правила — в
 [docs/DATA_MODEL.md](docs/DATA_MODEL.md), а мониторинг/retry worker — в
-[docs/SCHEDULING_RUNBOOK.md](docs/SCHEDULING_RUNBOOK.md). Security model — в
+[docs/SCHEDULING_RUNBOOK.md](docs/SCHEDULING_RUNBOOK.md), формулы вкладов — в
+[docs/DEPOSIT_CALCULATIONS.md](docs/DEPOSIT_CALCULATIONS.md). Security model — в
 [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Структура

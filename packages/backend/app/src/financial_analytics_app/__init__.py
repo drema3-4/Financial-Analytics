@@ -1,5 +1,10 @@
 """Application use cases and persistence ports."""
 
+from financial_analytics_app.deposits import (
+    DepositService,
+    DepositValuation,
+    InterestReconciliation,
+)
 from financial_analytics_app.ledger import (
     AccountWithBalance,
     LedgerService,
@@ -9,6 +14,7 @@ from financial_analytics_app.ledger import (
 )
 from financial_analytics_app.ports import (
     AuditEvent,
+    DepositRepository,
     IdempotencyRecord,
     LedgerRepository,
     SchedulingRepository,
@@ -32,8 +38,12 @@ __all__ = [
     "AuditEvent",
     "AccountWithBalance",
     "ConcurrentModificationError",
+    "DepositRepository",
+    "DepositService",
+    "DepositValuation",
     "IdempotencyConflictError",
     "IdempotencyRecord",
+    "InterestReconciliation",
     "LedgerRepository",
     "LedgerService",
     "RecordTransaction",

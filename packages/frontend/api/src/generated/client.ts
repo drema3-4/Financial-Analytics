@@ -28,6 +28,8 @@ export type BootstrapRequest = {
   timezone: string;
 };
 
+export type CapitalizationFrequency = "daily" | "monthly_calendar_end";
+
 export type CatchUpPolicy = "all" | "latest";
 
 export type CategoryGroupResponse = {
@@ -67,6 +69,23 @@ export type CreateCategoryRequest = {
   group_id?: (string) | (null);
 };
 
+export type CreateDepositRequest = {
+  principal_account_id: string;
+  currency: string;
+  opened_on: string;
+  matures_on: string;
+  rate_periods: Array<RatePeriodInput>;
+  capitalization_frequency: CapitalizationFrequency;
+  day_count_convention: DayCountConvention;
+  rounding_policy: RoundingPolicy;
+  interest_rounding_frequency: InterestRoundingFrequency;
+  timezone: string;
+  cashflow_cutoff_time: string;
+  cashflow_cutoff_inclusive: boolean;
+  early_close_rule: EarlyCloseRuleInput;
+  tax_rate: RateInput;
+};
+
 export type CreateRecurringRuleRequest = {
   frequency: RecurrenceFrequency;
   starts_on: string;
@@ -82,6 +101,8 @@ export type CreateTagRequest = {
   name: string;
 };
 
+export type DayCountConvention = "actual_365_fixed" | "actual_actual_isda";
+
 export type DeadLetterJobResponse = {
   id: string;
   rule_id: string;
@@ -92,8 +113,86 @@ export type DeadLetterJobResponse = {
   last_error: (string) | (null);
 };
 
+export type DepositCashflowRequest = {
+  counterparty_account_id: string;
+  money: MoneyInput;
+  occurred_at: string;
+  description: string;
+};
+
+export type DepositInterestRequest = {
+  money: MoneyInput;
+  occurred_at: string;
+  description: string;
+};
+
+export type DepositTermsResponse = {
+  id: string;
+  principal_account_id: string;
+  currency: string;
+  opened_on: string;
+  matures_on: string;
+  rate_periods: Array<RatePeriodResponse>;
+  capitalization_frequency: CapitalizationFrequency;
+  day_count_convention: DayCountConvention;
+  rounding_policy: RoundingPolicy;
+  interest_rounding_frequency: InterestRoundingFrequency;
+  timezone: string;
+  cashflow_cutoff_time: string;
+  cashflow_cutoff_inclusive: boolean;
+  early_close_rule: EarlyCloseRuleResponse;
+  tax_rate: string;
+  algorithm_version: string;
+};
+
+export type DepositValuationResponse = {
+  algorithm_version: string;
+  as_of: string;
+  closes_on: string;
+  current_principal: MoneyResponse;
+  accrued_interest: MoneyResponse;
+  current_value: MoneyResponse;
+  projected_maturity_value: MoneyResponse;
+  effective_yield: (string) | (null);
+  schedule: Array<InterestScheduleEntryResponse>;
+  reconciliation: Array<InterestReconciliationResponse>;
+};
+
+export type EarlyClosePolicy = "forbid" | "forfeit_interest" | "reprice";
+
+export type EarlyCloseRuleInput = {
+  policy: EarlyClosePolicy;
+  nominal_rate: (RateInput) | (null);
+};
+
+export type EarlyCloseRuleResponse = {
+  policy: EarlyClosePolicy;
+  nominal_rate: (string) | (null);
+};
+
 export type HTTPValidationError = {
   detail?: Array<ValidationError>;
+};
+
+export type InterestReconciliationResponse = {
+  posting_date: string;
+  planned_interest: MoneyResponse;
+  actual_interest: MoneyResponse;
+  variance: MoneyResponse;
+};
+
+export type InterestRoundingFrequency = "daily" | "capitalization";
+
+export type InterestScheduleEntryResponse = {
+  accrual_starts_on: string;
+  accrual_ends_on: string;
+  posting_date: string;
+  opening_balance: MoneyResponse;
+  cashflow: MoneyResponse;
+  gross_interest: MoneyResponse;
+  tax: MoneyResponse;
+  net_interest: MoneyResponse;
+  closing_balance: MoneyResponse;
 };
 
 export type LivenessResponse = {
@@ -176,6 +275,22 @@ export type ProfileResponse = {
   created_at: string;
 };
 
+export type RateInput = {
+  value: string;
+};
+
+export type RatePeriodInput = {
+  starts_on: string;
+  ends_on: string;
+  nominal_rate: RateInput;
+};
+
+export type RatePeriodResponse = {
+  starts_on: string;
+  ends_on: string;
+  nominal_rate: string;
+};
+
 export type ReadinessChecks = {
   database?: "up";
 };
@@ -227,6 +342,8 @@ export type ReversalRequest = {
   reason: string;
 };
 
+export type RoundingPolicy = "half_even" | "half_up";
+
 export type RuleVersionRequest = {
   version: number;
 };
@@ -237,7 +354,7 @@ export type TagResponse = {
   version: number;
 };
 
-export type TransactionKind = "income" | "expense" | "transfer" | "adjustment" | "reversal";
+export type TransactionKind = "income" | "expense" | "transfer" | "adjustment" | "interest" | "reversal";
 
 export type TransactionPageResponse = {
   items: Array<TransactionResponse>;
@@ -252,6 +369,7 @@ export type TransactionResponse = {
   source: string;
   category_id: (string) | (null);
   reversal_of_id: (string) | (null);
+  deposit_id: (string) | (null);
   tag_ids: Array<string>;
   postings: Array<PostingResponse>;
   version: number;
@@ -783,6 +901,86 @@ export class FinancialAnalyticsClient {
       headers["X-CSRF-Token"] = String(args.xCSRFToken);
     }
     return this.request<DeadLetterJobResponse>("POST", path, query, undefined, headers);
+  }
+
+  async listDeposits(): Promise<Array<DepositTermsResponse>> {
+    let path = "/api/v1/deposits";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    return this.request<Array<DepositTermsResponse>>("GET", path, query, undefined, headers);
+  }
+
+  async createDeposit(args: { idempotencyKey: string; xCSRFToken: (string) | (null); body: CreateDepositRequest; }): Promise<DepositTermsResponse> {
+    let path = "/api/v1/deposits";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.idempotencyKey !== undefined && args.idempotencyKey !== null) {
+      headers["Idempotency-Key"] = String(args.idempotencyKey);
+    }
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<DepositTermsResponse>("POST", path, query, args.body, headers);
+  }
+
+  async getDeposit(args: { depositId: string; }): Promise<DepositTermsResponse> {
+    let path = "/api/v1/deposits/{deposit_id}";
+    path = path.replace("{deposit_id}", encodeURIComponent(String(args.depositId)));
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    return this.request<DepositTermsResponse>("GET", path, query, undefined, headers);
+  }
+
+  async recordDepositCashflow(args: { depositId: string; idempotencyKey: string; xCSRFToken: (string) | (null); body: DepositCashflowRequest; }): Promise<TransactionResponse> {
+    let path = "/api/v1/deposits/{deposit_id}/cashflows";
+    path = path.replace("{deposit_id}", encodeURIComponent(String(args.depositId)));
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.idempotencyKey !== undefined && args.idempotencyKey !== null) {
+      headers["Idempotency-Key"] = String(args.idempotencyKey);
+    }
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<TransactionResponse>("POST", path, query, args.body, headers);
+  }
+
+  async recordDepositInterest(args: { depositId: string; idempotencyKey: string; xCSRFToken: (string) | (null); body: DepositInterestRequest; }): Promise<TransactionResponse> {
+    let path = "/api/v1/deposits/{deposit_id}/interest-postings";
+    path = path.replace("{deposit_id}", encodeURIComponent(String(args.depositId)));
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.idempotencyKey !== undefined && args.idempotencyKey !== null) {
+      headers["Idempotency-Key"] = String(args.idempotencyKey);
+    }
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<TransactionResponse>("POST", path, query, args.body, headers);
+  }
+
+  async getDepositValuation(args: { depositId: string; asOf: string; closeOn?: (string) | (null); }): Promise<DepositValuationResponse> {
+    let path = "/api/v1/deposits/{deposit_id}/valuation";
+    path = path.replace("{deposit_id}", encodeURIComponent(String(args.depositId)));
+    const query = new URLSearchParams();
+    if (args.asOf !== undefined && args.asOf !== null) {
+      const value = args.asOf;
+      if (Array.isArray(value)) {
+        for (const item of value) query.append("as_of", String(item));
+      } else {
+        query.set("as_of", String(value));
+      }
+    }
+    if (args.closeOn !== undefined && args.closeOn !== null) {
+      const value = args.closeOn;
+      if (Array.isArray(value)) {
+        for (const item of value) query.append("close_on", String(item));
+      } else {
+        query.set("close_on", String(value));
+      }
+    }
+    const headers: Record<string, string> = {};
+    return this.request<DepositValuationResponse>("GET", path, query, undefined, headers);
   }
 
   private async request<T>(
