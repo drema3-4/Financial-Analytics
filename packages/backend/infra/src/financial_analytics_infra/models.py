@@ -189,13 +189,21 @@ class AccountModel(Base):
         UniqueConstraint("owner_id", "id", "currency", name="uq_accounts_owner_id_id_currency"),
         CheckConstraint(
             "kind IN ('cash', 'bank', 'savings', 'deposit', 'other_asset', "
-            "'system_income', 'system_expense')",
+            "'system_income', 'system_expense', 'system_equity')",
             name="account_kind",
         ),
         CheckConstraint("currency ~ '^[A-Z]{3}$'", name="account_currency"),
         CheckConstraint("char_length(btrim(name)) > 0", name="account_name"),
         CheckConstraint("version > 0", name="account_version"),
         Index("ix_accounts_owner_id_archived", "owner_id", "archived"),
+        Index(
+            "uq_accounts_owner_system_kind_currency",
+            "owner_id",
+            "kind",
+            "currency",
+            unique=True,
+            postgresql_where=text("kind IN ('system_income', 'system_expense', 'system_equity')"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
@@ -333,15 +341,17 @@ class TransactionModel(Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint(
-            "kind IN ('income', 'expense', 'transfer', 'reversal')",
+            "kind IN ('income', 'expense', 'transfer', 'adjustment', 'reversal')",
             name="transaction_kind",
         ),
         CheckConstraint("status IN ('pending', 'posted')", name="transaction_status"),
         CheckConstraint("currency ~ '^[A-Z]{3}$'", name="transaction_currency"),
+        CheckConstraint("char_length(btrim(source)) BETWEEN 1 AND 32", name="transaction_source"),
         CheckConstraint(
             "(kind IN ('income', 'expense') AND category_id IS NOT NULL "
             "AND reversal_of_id IS NULL) OR "
-            "(kind = 'transfer' AND category_id IS NULL AND reversal_of_id IS NULL) OR "
+            "(kind IN ('transfer', 'adjustment') AND category_id IS NULL "
+            "AND reversal_of_id IS NULL) OR "
             "(kind = 'reversal' AND category_id IS NULL AND reversal_of_id IS NOT NULL)",
             name="transaction_shape",
         ),
@@ -368,6 +378,7 @@ class TransactionModel(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    source: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'manual'"))
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     created_at: Mapped[datetime] = mapped_column(

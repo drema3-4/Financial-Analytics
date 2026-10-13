@@ -137,3 +137,27 @@ window в памяти процесса для login и refresh. Перед го
 cookie-аутентифицированные мутации, а строгий CORS не полагается на wildcard. Локальному
 однопроцессному MVP достаточно in-memory limiter без преждевременной инфраструктуры.
 
+## ADR-013: ledger command API, adjustments и стабильная выдача
+
+**Дата:** 2026-10-13.
+
+**Решение:** начальный остаток и ручная корректировка являются immutable transaction типа
+`adjustment`. Вторая сторона проводки — скрытый owner-scoped `system_equity` account той же
+валюты; HTTP API не выдаёт system accounts как пользовательские. Коррекция проведённой
+операции выполняется reversal и, если нужно, новой командой, а не изменением или удалением
+истории.
+
+Все create/reversal commands требуют `Idempotency-Key`. Перед чтением append-only replay
+record PostgreSQL adapter берёт transaction-level advisory lock, вычисленный из
+`owner/scope/key`: конкурентные одинаковые payload возвращают один resource, а иной payload
+получает `409`. Request hash строится из канонического JSON контракта.
+
+Журнал использует descending keyset pagination по `(occurred_at, id)` и opaque base64url
+cursor. OpenAPI фиксируется в repository; детерминированный generator строит TypeScript
+fetch-client и в `--check` режиме используется как CI drift gate.
+
+**Почему:** отдельный adjustment не искажает cash-flow как доход/расход, но сохраняет
+double-entry и audit trail. Advisory lock закрывает race до unique constraint без глобальной
+сериализации. Keyset cursor остаётся стабильным при вставке новых операций между страницами,
+а checked-in snapshot делает HTTP contract и клиент воспроизводимыми.
+

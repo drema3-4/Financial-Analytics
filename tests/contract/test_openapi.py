@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from financial_analytics_api.main import create_app
 from financial_analytics_infra.settings import AppEnvironment, Settings
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_openapi_documents_health_identity_and_problem_details() -> None:
@@ -28,3 +33,46 @@ def test_openapi_documents_health_identity_and_problem_details() -> None:
     ready_responses = schema["paths"]["/health/ready"]["get"]["responses"]
     problem_schema = ready_responses["503"]["content"]["application/problem+json"]["schema"]
     assert problem_schema["title"] == "ProblemDetails"
+
+
+def test_openapi_documents_ledger_contracts_examples_and_exact_money() -> None:
+    settings = Settings(app_env=AppEnvironment.TEST, _env_file=None)
+    with TestClient(create_app(settings)) as client:
+        schema = client.get("/openapi.json").json()
+
+    required_paths = {
+        "/api/v1/accounts",
+        "/api/v1/accounts/{account_id}",
+        "/api/v1/category-groups",
+        "/api/v1/categories",
+        "/api/v1/tags",
+        "/api/v1/transactions/income",
+        "/api/v1/transactions/expense",
+        "/api/v1/transfers",
+        "/api/v1/adjustments",
+        "/api/v1/transactions",
+        "/api/v1/transactions/export.csv",
+        "/api/v1/transactions/{transaction_id}/reversal",
+    }
+    assert required_paths <= schema["paths"].keys()
+    assert "delete" not in schema["paths"]["/api/v1/transactions/{transaction_id}"]
+
+    create_account = schema["paths"]["/api/v1/accounts"]["post"]
+    headers = {item["name"]: item for item in create_account["parameters"]}
+    assert headers["Idempotency-Key"]["required"] is True
+    assert create_account["requestBody"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/CreateAccountRequest"
+    )
+    assert schema["components"]["schemas"]["CreateAccountRequest"]["examples"]
+    amount_schema = schema["components"]["schemas"]["MoneyInput"]["properties"]["amount"]
+    assert amount_schema["type"] == "string"
+    assert "pattern" in amount_schema
+    assert "409" in create_account["responses"]
+    assert create_account["responses"]["409"]["content"]["application/problem+json"]
+
+
+def test_checked_in_openapi_snapshot_matches_application() -> None:
+    settings = Settings(app_env=AppEnvironment.TEST, _env_file=None)
+    generated = create_app(settings).openapi()
+    snapshot = json.loads((ROOT / "docs" / "openapi.json").read_text(encoding="utf-8"))
+    assert snapshot == generated

@@ -50,6 +50,7 @@ class RecordTransaction:
 
         with self._uow_factory.open(transaction.owner_id) as uow:
             if idempotency_key is not None and request_hash is not None:
+                uow.idempotency.lock("record_transaction", idempotency_key)
                 existing = uow.idempotency.get("record_transaction", idempotency_key)
                 if existing is not None:
                     if existing.request_hash != request_hash:

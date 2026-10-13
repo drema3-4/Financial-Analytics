@@ -1,49 +1,6 @@
-export interface LivenessResponse {
-  status: "alive";
-}
+export * from "./generated/client";
 
-export interface ReadinessResponse {
-  status: "ready";
-  checks: {
-    database: "up";
-  };
-}
-
-export interface ProblemDetails {
-  type: string;
-  title: string;
-  status: number;
-  detail: string;
-  code: string;
-  instance: string;
-  request_id: string;
-  correlation_id: string;
-  errors?: Record<string, unknown>[];
-}
-
-export interface BootstrapRequest {
-  email: string;
-  password: string;
-  base_currency: string;
-  locale: string;
-  timezone: string;
-}
-
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-export interface ProfileResponse {
-  id: string;
-  email: string;
-  base_currency: string;
-  locale: string;
-  timezone: string;
-  status: "active" | "disabled";
-  is_master: boolean;
-  created_at: string;
-}
+import type { ProfileResponse, ReadinessResponse } from "./generated/client";
 
 export function isReadinessResponse(value: unknown): value is ReadinessResponse {
   if (typeof value !== "object" || value === null) {

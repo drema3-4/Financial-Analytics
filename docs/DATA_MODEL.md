@@ -46,6 +46,7 @@ erDiagram
         varchar kind
         varchar status
         char3 currency
+        varchar source
         uuid category_id FK
         uuid reversal_of_id FK
         integer version
@@ -115,6 +116,7 @@ Finance включает `accounts`, `category_groups`, `categories`, `tags`, `t
    ссылается на соответствующую исходную posting и обязана иметь тот же account/currency и
    строго противоположную сумму.
 6. Income/expense требуют category правильного kind. Transfer и reversal не имеют category.
+   Adjustment также не имеет category и балансируется через скрытый `system_equity` account.
 7. Межвалютный transfer текущей фабрикой запрещён. Будущая модель FX обязана хранить обе
    явные суммы и курс; скрытого пересчёта нет.
 8. Mutable справочники и accounts используют optimistic `version`; stale update отклоняется.
@@ -140,6 +142,11 @@ accounts принадлежат тому же owner и имеют kind `system_i
 После дохода, расхода, перевода и reversal расхода: `bank = 800.00`, `cash = 200.00`,
 `system_income = -1000.00`, `system_expense = 0.00`. Результат получается только из postings.
 
+Начальный остаток и ручная сверка записываются transaction kind `adjustment`: signed amount
+попадает в asset account, строго противоположная сумма — в owner/currency-scoped
+`system_equity`. `transactions.source` различает `manual`, `import` и внутренний `system`, а
+tags связываются через `transaction_tags`; ни одно из этих полей не участвует в арифметике.
+
 ## Owner scope и индексы
 
 `PostgresLedgerRepository(session, owner_id)` нельзя создать без владельца; методы чтения не
@@ -152,7 +159,7 @@ scope, составных owner FK и integration tests с двумя владе
 
 ## Миграции и downgrade
 
-`20261013_0003` применяется на чистую БД и проверяется `alembic check`. Downgrade до
+`20261013_0005` применяется на чистую БД и проверяется `alembic check`. Downgrade до
 `20261013_0001` удаляет финансовую схему и поэтому тестируется только на пустой disposable
 database. Для БД с реальными данными такой downgrade разрушителен и не является рабочей
 процедурой отката; используется forward fix/backup restore.

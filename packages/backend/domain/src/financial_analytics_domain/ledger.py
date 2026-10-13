@@ -22,10 +22,11 @@ class AccountKind(StrEnum):
     OTHER_ASSET = "other_asset"
     SYSTEM_INCOME = "system_income"
     SYSTEM_EXPENSE = "system_expense"
+    SYSTEM_EQUITY = "system_equity"
 
     @property
     def is_asset(self) -> bool:
-        return self not in {self.SYSTEM_INCOME, self.SYSTEM_EXPENSE}
+        return self not in {self.SYSTEM_INCOME, self.SYSTEM_EXPENSE, self.SYSTEM_EQUITY}
 
 
 class CategoryKind(StrEnum):
@@ -37,6 +38,7 @@ class TransactionKind(StrEnum):
     INCOME = "income"
     EXPENSE = "expense"
     TRANSFER = "transfer"
+    ADJUSTMENT = "adjustment"
     REVERSAL = "reversal"
 
 
@@ -123,6 +125,8 @@ class Transaction:
     category_id: UUID | None = None
     reversal_of_id: UUID | None = None
     version: int = 1
+    source: str = "manual"
+    tag_ids: tuple[UUID, ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.postings) < 2:
@@ -143,9 +147,13 @@ class Transaction:
             if self.category_id is None:
                 raise DomainError("income and expense require a category")
         elif self.category_id is not None:
-            raise DomainError("transfer and reversal do not carry a category")
+            raise DomainError("transfer, adjustment, and reversal do not carry a category")
         if self.version < 1:
             raise DomainError("transaction version must be positive")
+        if not self.source.strip() or len(self.source) > 32:
+            raise DomainError("transaction source must contain 1 to 32 characters")
+        if len(set(self.tag_ids)) != len(self.tag_ids):
+            raise DomainError("transaction tags must be unique")
 
     @staticmethod
     def _same_owner(owner_id: UUID, *entities: Account | Category) -> None:
@@ -171,6 +179,8 @@ class Transaction:
         occurred_at: Instant,
         posting_ids: Sequence[UUID],
         description: str = "",
+        entry_source: str = "manual",
+        tag_ids: Sequence[UUID] = (),
     ) -> Transaction:
         cls._same_owner(owner_id, source, destination)
         if source.id == destination.id:
@@ -190,6 +200,8 @@ class Transaction:
             currency=source.currency,
             occurred_at=occurred_at,
             description=description,
+            source=entry_source,
+            tag_ids=tuple(tag_ids),
             postings=(
                 Posting(first, id, source.id, -amount),
                 Posting(second, id, destination.id, amount),
@@ -209,6 +221,8 @@ class Transaction:
         occurred_at: Instant,
         posting_ids: Sequence[UUID],
         description: str = "",
+        entry_source: str = "manual",
+        tag_ids: Sequence[UUID] = (),
     ) -> Transaction:
         cls._same_owner(owner_id, asset, income_account, category)
         _require_income_expense_shape(
@@ -228,6 +242,8 @@ class Transaction:
             occurred_at=occurred_at,
             description=description,
             category_id=category.id,
+            source=entry_source,
+            tag_ids=tuple(tag_ids),
             postings=(
                 Posting(first, id, asset.id, amount),
                 Posting(second, id, income_account.id, -amount),
@@ -247,6 +263,8 @@ class Transaction:
         occurred_at: Instant,
         posting_ids: Sequence[UUID],
         description: str = "",
+        entry_source: str = "manual",
+        tag_ids: Sequence[UUID] = (),
     ) -> Transaction:
         cls._same_owner(owner_id, asset, expense_account, category)
         _require_income_expense_shape(
@@ -266,9 +284,51 @@ class Transaction:
             occurred_at=occurred_at,
             description=description,
             category_id=category.id,
+            source=entry_source,
+            tag_ids=tuple(tag_ids),
             postings=(
                 Posting(first, id, asset.id, -amount),
                 Posting(second, id, expense_account.id, amount),
+            ),
+        )
+
+    @classmethod
+    def adjustment(
+        cls,
+        *,
+        id: UUID,
+        owner_id: UUID,
+        asset: Account,
+        equity_account: Account,
+        amount: Money,
+        occurred_at: Instant,
+        posting_ids: Sequence[UUID],
+        description: str,
+        entry_source: str = "manual",
+        tag_ids: Sequence[UUID] = (),
+    ) -> Transaction:
+        cls._same_owner(owner_id, asset, equity_account)
+        if not asset.kind.is_asset or equity_account.kind is not AccountKind.SYSTEM_EQUITY:
+            raise DomainError("adjustment account roles are invalid")
+        if asset.currency != equity_account.currency or amount.currency != asset.currency:
+            raise CurrencyMismatchError("adjustment accounts and amount must share a currency")
+        if amount.amount == 0:
+            raise DomainError("adjustment amount must not be zero")
+        if not description.strip():
+            raise DomainError("adjustment description must not be empty")
+        first, second = _two_posting_ids(posting_ids)
+        return cls(
+            id=id,
+            owner_id=owner_id,
+            kind=TransactionKind.ADJUSTMENT,
+            currency=asset.currency,
+            occurred_at=occurred_at,
+            description=description,
+            source=entry_source,
+            tag_ids=tuple(tag_ids),
+            postings=(
+                Posting(first, id, asset.id, amount),
+                Posting(second, id, equity_account.id, -amount),
             ),
         )
 
@@ -282,6 +342,7 @@ class Transaction:
         occurred_at: Instant,
         posting_ids: Sequence[UUID],
         reason: str,
+        entry_source: str = "manual",
     ) -> Transaction:
         if original.owner_id != owner_id:
             raise OwnershipError("reversal owner must match the original transaction")
@@ -310,6 +371,8 @@ class Transaction:
             postings=postings,
             description=reason,
             reversal_of_id=original.id,
+            source=entry_source,
+            tag_ids=original.tag_ids,
         )
 
 

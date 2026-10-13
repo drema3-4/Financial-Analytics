@@ -38,5 +38,9 @@ class Database:
         except Exception:
             return False
 
+    @property
+    def engine(self) -> Engine:
+        return self._engine
+
     def close(self) -> None:
         self._engine.dispose()

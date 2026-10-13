@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+from collections import defaultdict
 from collections.abc import Sequence
+from datetime import datetime
 from types import TracebackType
 from uuid import UUID, uuid4
 
-from sqlalchemy import Select, func, select, update
+from sqlalchemy import Select, exists, func, select, tuple_, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -14,6 +18,8 @@ from financial_analytics_app.ports import (
     IdempotencyRecord,
     IdempotencyRepository,
     LedgerRepository,
+    TransactionCursor,
+    TransactionQuery,
     UnitOfWork,
 )
 from financial_analytics_app.services import ConcurrentModificationError
@@ -22,6 +28,7 @@ from financial_analytics_domain import (
     AccountKind,
     Category,
     CategoryGroup,
+    CategoryKind,
     Currency,
     Instant,
     Money,
@@ -40,6 +47,7 @@ from financial_analytics_infra.models import (
     PostingModel,
     TagModel,
     TransactionModel,
+    TransactionTagModel,
 )
 
 
@@ -112,6 +120,67 @@ class PostgresLedgerRepository:
             version=new_version,
         )
 
+    def list_accounts(self, *, include_archived: bool = False) -> tuple[Account, ...]:
+        query = select(AccountModel).where(
+            AccountModel.owner_id == self._owner_id,
+            AccountModel.kind.not_in(
+                (
+                    AccountKind.SYSTEM_INCOME.value,
+                    AccountKind.SYSTEM_EXPENSE.value,
+                    AccountKind.SYSTEM_EQUITY.value,
+                )
+            ),
+        )
+        if not include_archived:
+            query = query.where(AccountModel.archived.is_(False))
+        query = query.order_by(AccountModel.name, AccountModel.id)
+        return tuple(_account_from_row(row) for row in self._session.scalars(query))
+
+    def get_or_create_system_account(
+        self, kind: AccountKind, currency: Currency
+    ) -> tuple[Account, bool]:
+        if kind.is_asset:
+            raise ValueError("system account kind is required")
+        account_id = uuid4()
+        statement = (
+            postgresql_insert(AccountModel)
+            .values(
+                id=account_id,
+                owner_id=self._owner_id,
+                name=f"System {kind.value.removeprefix('system_')} ({currency.code})",
+                kind=kind.value,
+                currency=currency.code,
+                archived=False,
+                version=1,
+            )
+            .on_conflict_do_nothing(
+                index_elements=[
+                    AccountModel.owner_id,
+                    AccountModel.kind,
+                    AccountModel.currency,
+                ],
+                index_where=AccountModel.kind.in_(
+                    (
+                        AccountKind.SYSTEM_INCOME.value,
+                        AccountKind.SYSTEM_EXPENSE.value,
+                        AccountKind.SYSTEM_EQUITY.value,
+                    )
+                ),
+            )
+            .returning(AccountModel.id)
+        )
+        created_id = self._session.scalar(statement)
+        row = self._session.scalar(
+            select(AccountModel).where(
+                AccountModel.owner_id == self._owner_id,
+                AccountModel.kind == kind.value,
+                AccountModel.currency == currency.code,
+            )
+        )
+        if row is None:
+            raise RuntimeError("system account upsert did not return an account")
+        return _account_from_row(row), created_id is not None
+
     def add_category_group(self, group: CategoryGroup) -> None:
         self._require_owner(group.owner_id)
         self._session.add(
@@ -122,6 +191,46 @@ class PostgresLedgerRepository:
                 name=group.name,
                 version=group.version,
             )
+        )
+
+    def get_category_group(self, group_id: UUID) -> CategoryGroup | None:
+        row = self._session.scalar(
+            select(CategoryGroupModel).where(
+                CategoryGroupModel.owner_id == self._owner_id,
+                CategoryGroupModel.id == group_id,
+            )
+        )
+        return None if row is None else _category_group_from_row(row)
+
+    def list_category_groups(self) -> tuple[CategoryGroup, ...]:
+        rows = self._session.scalars(
+            select(CategoryGroupModel)
+            .where(CategoryGroupModel.owner_id == self._owner_id)
+            .order_by(CategoryGroupModel.name, CategoryGroupModel.id)
+        )
+        return tuple(_category_group_from_row(row) for row in rows)
+
+    def save_category_group(self, group: CategoryGroup) -> CategoryGroup:
+        self._require_owner(group.owner_id)
+        new_version = group.version + 1
+        changed_id = self._session.scalar(
+            update(CategoryGroupModel)
+            .where(
+                CategoryGroupModel.owner_id == self._owner_id,
+                CategoryGroupModel.id == group.id,
+                CategoryGroupModel.version == group.version,
+            )
+            .values(name=group.name, parent_id=group.parent_id, version=new_version)
+            .returning(CategoryGroupModel.id)
+        )
+        if changed_id is None:
+            raise ConcurrentModificationError("category group version is stale or absent")
+        return CategoryGroup(
+            id=group.id,
+            owner_id=group.owner_id,
+            name=group.name,
+            parent_id=group.parent_id,
+            version=new_version,
         )
 
     def add_category(self, category: Category) -> None:
@@ -137,6 +246,52 @@ class PostgresLedgerRepository:
             )
         )
 
+    def get_category(self, category_id: UUID) -> Category | None:
+        row = self._session.scalar(
+            select(CategoryModel).where(
+                CategoryModel.owner_id == self._owner_id,
+                CategoryModel.id == category_id,
+            )
+        )
+        return None if row is None else _category_from_row(row)
+
+    def list_categories(self) -> tuple[Category, ...]:
+        rows = self._session.scalars(
+            select(CategoryModel)
+            .where(CategoryModel.owner_id == self._owner_id)
+            .order_by(CategoryModel.kind, CategoryModel.name, CategoryModel.id)
+        )
+        return tuple(_category_from_row(row) for row in rows)
+
+    def save_category(self, category: Category) -> Category:
+        self._require_owner(category.owner_id)
+        new_version = category.version + 1
+        changed_id = self._session.scalar(
+            update(CategoryModel)
+            .where(
+                CategoryModel.owner_id == self._owner_id,
+                CategoryModel.id == category.id,
+                CategoryModel.version == category.version,
+            )
+            .values(
+                name=category.name,
+                kind=category.kind.value,
+                group_id=category.group_id,
+                version=new_version,
+            )
+            .returning(CategoryModel.id)
+        )
+        if changed_id is None:
+            raise ConcurrentModificationError("category version is stale or absent")
+        return Category(
+            id=category.id,
+            owner_id=category.owner_id,
+            name=category.name,
+            kind=category.kind,
+            group_id=category.group_id,
+            version=new_version,
+        )
+
     def add_tag(self, tag: Tag) -> None:
         self._require_owner(tag.owner_id)
         self._session.add(
@@ -147,6 +302,20 @@ class PostgresLedgerRepository:
                 version=tag.version,
             )
         )
+
+    def get_tag(self, tag_id: UUID) -> Tag | None:
+        row = self._session.scalar(
+            select(TagModel).where(TagModel.owner_id == self._owner_id, TagModel.id == tag_id)
+        )
+        return None if row is None else _tag_from_row(row)
+
+    def list_tags(self) -> tuple[Tag, ...]:
+        rows = self._session.scalars(
+            select(TagModel)
+            .where(TagModel.owner_id == self._owner_id)
+            .order_by(TagModel.name, TagModel.id)
+        )
+        return tuple(_tag_from_row(row) for row in rows)
 
     def add_transaction(
         self,
@@ -169,6 +338,7 @@ class PostgresLedgerRepository:
             status="pending",
             currency=transaction.currency.code,
             description=transaction.description,
+            source=transaction.source,
             occurred_at=transaction.occurred_at.value,
             version=transaction.version,
         )
@@ -190,6 +360,17 @@ class PostgresLedgerRepository:
             ]
         )
         self._session.flush()
+        self._session.add_all(
+            [
+                TransactionTagModel(
+                    owner_id=transaction.owner_id,
+                    transaction_id=transaction.id,
+                    tag_id=tag_id,
+                )
+                for tag_id in transaction.tag_ids
+            ]
+        )
+        self._session.flush()
         row.status = "posted"
         self._session.flush()
 
@@ -205,13 +386,122 @@ class PostgresLedgerRepository:
             )
             .order_by(PostingModel.line_no)
         ).all()
-        return _transaction_from_rows(row, postings)
+        tag_ids = tuple(
+            self._session.scalars(
+                select(TransactionTagModel.tag_id)
+                .where(
+                    TransactionTagModel.owner_id == self._owner_id,
+                    TransactionTagModel.transaction_id == transaction_id,
+                )
+                .order_by(TransactionTagModel.tag_id)
+            )
+        )
+        return _transaction_from_rows(row, postings, tag_ids)
 
     def _transaction_query(self, transaction_id: UUID) -> Select[TransactionModel]:
         return select(TransactionModel).where(
             TransactionModel.owner_id == self._owner_id,
             TransactionModel.id == transaction_id,
             TransactionModel.status == "posted",
+        )
+
+    def list_transactions(
+        self,
+        query: TransactionQuery,
+        *,
+        cursor: TransactionCursor | None,
+        limit: int,
+    ) -> tuple[tuple[Transaction, ...], bool, datetime]:
+        snapshot_at = (
+            cursor.snapshot_at
+            if cursor is not None
+            else self._session.scalar(select(func.clock_timestamp()))
+        )
+        if snapshot_at is None:
+            raise RuntimeError("database did not return a pagination snapshot")
+        statement = select(TransactionModel).where(
+            TransactionModel.owner_id == self._owner_id,
+            TransactionModel.status == "posted",
+            TransactionModel.created_at <= snapshot_at,
+        )
+        if query.account_id is not None:
+            statement = statement.where(
+                exists(
+                    select(PostingModel.id).where(
+                        PostingModel.owner_id == TransactionModel.owner_id,
+                        PostingModel.transaction_id == TransactionModel.id,
+                        PostingModel.account_id == query.account_id,
+                    )
+                )
+            )
+        if query.category_id is not None:
+            statement = statement.where(TransactionModel.category_id == query.category_id)
+        if query.tag_id is not None:
+            statement = statement.where(
+                exists(
+                    select(TransactionTagModel.tag_id).where(
+                        TransactionTagModel.owner_id == TransactionModel.owner_id,
+                        TransactionTagModel.transaction_id == TransactionModel.id,
+                        TransactionTagModel.tag_id == query.tag_id,
+                    )
+                )
+            )
+        if query.kind is not None:
+            statement = statement.where(TransactionModel.kind == query.kind.value)
+        if query.occurred_from is not None:
+            statement = statement.where(TransactionModel.occurred_at >= query.occurred_from)
+        if query.occurred_to is not None:
+            statement = statement.where(TransactionModel.occurred_at < query.occurred_to)
+        if query.search:
+            statement = statement.where(TransactionModel.description.ilike(f"%{query.search}%"))
+        if cursor is not None:
+            statement = statement.where(
+                tuple_(TransactionModel.occurred_at, TransactionModel.id)
+                < (cursor.occurred_at, cursor.transaction_id)
+            )
+        rows = self._session.scalars(
+            statement.order_by(
+                TransactionModel.occurred_at.desc(), TransactionModel.id.desc()
+            ).limit(limit + 1)
+        ).all()
+        has_more = len(rows) > limit
+        selected = rows[:limit]
+        if not selected:
+            return (), False, snapshot_at
+        transaction_ids = [row.id for row in selected]
+        posting_rows = self._session.scalars(
+            select(PostingModel)
+            .where(
+                PostingModel.owner_id == self._owner_id,
+                PostingModel.transaction_id.in_(transaction_ids),
+            )
+            .order_by(PostingModel.transaction_id, PostingModel.line_no)
+        ).all()
+        tag_rows = self._session.execute(
+            select(TransactionTagModel.transaction_id, TransactionTagModel.tag_id)
+            .where(
+                TransactionTagModel.owner_id == self._owner_id,
+                TransactionTagModel.transaction_id.in_(transaction_ids),
+            )
+            .order_by(TransactionTagModel.transaction_id, TransactionTagModel.tag_id)
+        ).all()
+        postings_by_transaction: defaultdict[UUID, list[PostingModel]] = defaultdict(list)
+        for posting in posting_rows:
+            postings_by_transaction[posting.transaction_id].append(posting)
+        tags_by_transaction: defaultdict[UUID, list[UUID]] = defaultdict(list)
+        for transaction_id, tag_id in tag_rows:
+            tags_by_transaction[transaction_id].append(tag_id)
+        return (
+            tuple(
+                _transaction_from_rows(
+                    row,
+                    postings_by_transaction[row.id],
+                    tags_by_transaction[row.id],
+                )
+                for row in selected
+            ),
+            has_more,
+            snapshot_at,
         )
 
     def list_postings(self, account_id: UUID | None = None) -> tuple[Posting, ...]:
@@ -286,6 +576,11 @@ class PostgresIdempotencyRepository:
     def __init__(self, session: Session, owner_id: UUID) -> None:
         self._session = session
         self._owner_id = owner_id
+
+    def lock(self, scope: str, key: str) -> None:
+        digest = hashlib.sha256(f"{self._owner_id}:{scope}:{key}".encode()).digest()
+        lock_id = int.from_bytes(digest[:8], byteorder="big", signed=True)
+        self._session.execute(select(func.pg_advisory_xact_lock(lock_id)))
 
     def get(self, scope: str, key: str) -> IdempotencyRecord | None:
         row = self._session.scalar(
@@ -381,6 +676,31 @@ def _account_from_row(row: AccountModel) -> Account:
     )
 
 
+def _category_group_from_row(row: CategoryGroupModel) -> CategoryGroup:
+    return CategoryGroup(
+        id=row.id,
+        owner_id=row.owner_id,
+        name=row.name,
+        parent_id=row.parent_id,
+        version=row.version,
+    )
+
+
+def _category_from_row(row: CategoryModel) -> Category:
+    return Category(
+        id=row.id,
+        owner_id=row.owner_id,
+        name=row.name,
+        kind=CategoryKind(row.kind),
+        group_id=row.group_id,
+        version=row.version,
+    )
+
+
+def _tag_from_row(row: TagModel) -> Tag:
+    return Tag(id=row.id, owner_id=row.owner_id, name=row.name, version=row.version)
+
+
 def _posting_from_row(row: PostingModel) -> Posting:
     return Posting(
         id=row.id,
@@ -392,7 +712,9 @@ def _posting_from_row(row: PostingModel) -> Posting:
 
 
 def _transaction_from_rows(
-    row: TransactionModel, posting_rows: Sequence[PostingModel]
+    row: TransactionModel,
+    posting_rows: Sequence[PostingModel],
+    tag_ids: Sequence[UUID] = (),
 ) -> Transaction:
     return Transaction(
         id=row.id,
@@ -405,4 +727,6 @@ def _transaction_from_rows(
         category_id=row.category_id,
         reversal_of_id=row.reversal_of_id,
         version=row.version,
+        source=row.source,
+        tag_ids=tuple(tag_ids),
     )

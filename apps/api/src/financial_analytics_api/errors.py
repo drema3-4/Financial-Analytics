@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from financial_analytics_app.identity import (
@@ -19,6 +20,9 @@ from financial_analytics_app.identity import (
     InvalidSessionError,
     RateLimitExceededError,
 )
+from financial_analytics_app.ledger import ResourceConflictError, ResourceNotFoundError
+from financial_analytics_app.services import ConcurrentModificationError, IdempotencyConflictError
+from financial_analytics_domain.errors import DomainError
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +90,63 @@ def _problem_response(
 
 
 def install_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ResourceNotFoundError)
+    async def resource_not_found_handler(
+        request: Request, exc: ResourceNotFoundError
+    ) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=404,
+            code="resource_not_found",
+            title="Resource not found",
+            detail="The requested resource does not exist or is not accessible.",
+        )
+
+    @app.exception_handler(IdempotencyConflictError)
+    async def idempotency_conflict_handler(
+        request: Request, exc: IdempotencyConflictError
+    ) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=409,
+            code="idempotency_conflict",
+            title="Idempotency conflict",
+            detail="This Idempotency-Key was already used with a different payload.",
+        )
+
+    @app.exception_handler(ResourceConflictError)
+    @app.exception_handler(ConcurrentModificationError)
+    async def resource_conflict_handler(
+        request: Request, exc: ResourceConflictError | ConcurrentModificationError
+    ) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=409,
+            code="resource_conflict",
+            title="Resource conflict",
+            detail=str(exc),
+        )
+
+    @app.exception_handler(IntegrityError)
+    async def integrity_conflict_handler(request: Request, exc: IntegrityError) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=409,
+            code="resource_conflict",
+            title="Resource conflict",
+            detail="The command conflicts with an existing resource or immutable ledger state.",
+        )
+
+    @app.exception_handler(DomainError)
+    async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=422,
+            code="domain_validation_error",
+            title="Domain validation failed",
+            detail=str(exc),
+        )
+
     @app.exception_handler(BootstrapClosedError)
     async def bootstrap_closed_handler(request: Request, exc: BootstrapClosedError) -> JSONResponse:
         return _problem_response(

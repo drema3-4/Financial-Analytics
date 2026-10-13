@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from types import TracebackType
 from typing import Protocol, Self
 from uuid import UUID
 
 from financial_analytics_domain import (
     Account,
+    AccountKind,
     Category,
     CategoryGroup,
+    Currency,
     Instant,
     Money,
     Posting,
     Tag,
     Transaction,
+    TransactionKind,
 )
 
 
@@ -41,6 +45,24 @@ class IdempotencyRecord:
     created_at: Instant
 
 
+@dataclass(frozen=True, slots=True)
+class TransactionCursor:
+    occurred_at: datetime
+    transaction_id: UUID
+    snapshot_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class TransactionQuery:
+    account_id: UUID | None = None
+    category_id: UUID | None = None
+    tag_id: UUID | None = None
+    kind: TransactionKind | None = None
+    occurred_from: datetime | None = None
+    occurred_to: datetime | None = None
+    search: str | None = None
+
+
 class LedgerRepository(Protocol):
     """A repository that is unavoidably scoped to exactly one owner."""
 
@@ -53,17 +75,47 @@ class LedgerRepository(Protocol):
 
     def save_account(self, account: Account) -> Account: ...
 
+    def list_accounts(self, *, include_archived: bool = False) -> tuple[Account, ...]: ...
+
+    def get_or_create_system_account(
+        self, kind: AccountKind, currency: Currency
+    ) -> tuple[Account, bool]: ...
+
     def add_category_group(self, group: CategoryGroup) -> None: ...
+
+    def get_category_group(self, group_id: UUID) -> CategoryGroup | None: ...
+
+    def list_category_groups(self) -> tuple[CategoryGroup, ...]: ...
+
+    def save_category_group(self, group: CategoryGroup) -> CategoryGroup: ...
 
     def add_category(self, category: Category) -> None: ...
 
+    def get_category(self, category_id: UUID) -> Category | None: ...
+
+    def list_categories(self) -> tuple[Category, ...]: ...
+
+    def save_category(self, category: Category) -> Category: ...
+
     def add_tag(self, tag: Tag) -> None: ...
+
+    def get_tag(self, tag_id: UUID) -> Tag | None: ...
+
+    def list_tags(self) -> tuple[Tag, ...]: ...
 
     def add_transaction(
         self, transaction: Transaction, *, actor_id: UUID, request_id: UUID | None
     ) -> None: ...
 
     def get_transaction(self, transaction_id: UUID) -> Transaction | None: ...
+
+    def list_transactions(
+        self,
+        query: TransactionQuery,
+        *,
+        cursor: TransactionCursor | None,
+        limit: int,
+    ) -> tuple[tuple[Transaction, ...], bool, datetime]: ...
 
     def list_postings(self, account_id: UUID | None = None) -> tuple[Posting, ...]: ...
 
@@ -75,6 +127,8 @@ class AuditRepository(Protocol):
 
 
 class IdempotencyRepository(Protocol):
+    def lock(self, scope: str, key: str) -> None: ...
+
     def get(self, scope: str, key: str) -> IdempotencyRecord | None: ...
 
     def add(self, record: IdempotencyRecord) -> None: ...

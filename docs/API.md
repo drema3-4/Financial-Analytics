@@ -1,7 +1,9 @@
-# API contract through milestone 03
+# API contract through milestone 04
 
-Этап 03 добавляет identity endpoints; финансовый HTTP CRUD остаётся этапом 04. FastAPI
-публикует актуальную OpenAPI-схему по `/openapi.json` и интерактивную документацию по `/docs`.
+FastAPI публикует актуальную OpenAPI-схему по `/openapi.json` и интерактивную документацию
+по `/docs`. Зафиксированный snapshot находится в `docs/openapi.json`; из него
+детерминированно строится TypeScript fetch-client в
+`packages/frontend/api/src/generated/client.ts`.
 
 ## Identity
 
@@ -26,6 +28,95 @@ Expected security errors: `bootstrap_closed` (`409`), `invalid_credentials`/`inv
 
 Allowlist, invitation и email-token use cases существуют на application boundary, но намеренно
 не публикуются HTTP/UI до этапа 13 и не требуют SMTP.
+
+## Ledger API
+
+Все пути имеют prefix `/api/v1`, требуют access cookie, а mutations дополнительно требуют
+`X-CSRF-Token`. Каждая create/reversal command требует caller-generated `Idempotency-Key`
+длиной 1–200 ASCII-символов. Повтор с тем же key и тем же JSON возвращает тот же resource и
+не создаёт новую проводку; тот же key с другим payload возвращает `409 idempotency_conflict`.
+
+| Method | Path | Result |
+|---|---|---|
+| `POST`, `GET` | `/accounts` | создать/list accounts; optional opening balance — adjustment posting |
+| `GET`, `PATCH` | `/accounts/{id}` | account с rebuilt balance; rename/archive по optimistic `version` |
+| `POST`, `GET` | `/category-groups` | древовидные группы; list включает принадлежащие группе categories |
+| `POST`, `GET` | `/categories` | income/expense categories |
+| `POST`, `GET` | `/tags` | transaction tags |
+| `POST` | `/transactions/income` | income с asset/system-income postings |
+| `POST` | `/transactions/expense` | expense с asset/system-expense postings |
+| `POST` | `/transfers` | same-currency transfer между asset accounts |
+| `POST` | `/adjustments` | signed manual reconciliation через system-equity account |
+| `POST` | `/transactions/{id}/reversal` | полная противоположная проводка со ссылками на original |
+| `GET` | `/transactions`, `/transactions/{id}` | journal/detail; posted transaction не имеет DELETE API |
+| `GET` | `/transactions/export.csv` | filtered UTF-8 CSV с BOM и CRLF |
+
+`GET /transactions` принимает `account_id`, `category_id`, `tag_id`, `kind`, полуоткрытый
+интервал `occurred_from <= occurred_at < occurred_to`, substring `search`, `limit` 1–100 и
+opaque `cursor`. Порядок — `(occurred_at DESC, id DESC)`; `next_cursor` остаётся стабильным,
+если перед чтением следующей страницы появились более новые операции. CSV принимает те же
+filters без cursor/limit. Поля с запятыми, кавычками и переводами строк экранируются RFC 4180;
+ячейки, начинающиеся как spreadsheet formula, получают безопасный apostrophe prefix.
+
+Сумма в JSON всегда объект с decimal string и currency:
+
+```json
+{"amount": "1250.00", "currency": "RUB"}
+```
+
+JSON number, включая `1250.0`, отклоняется с `422 validation_error`. Сервер не выполняет
+неявное округление и проверяет minor units валюты. Межвалютный transfer возвращает domain
+validation error; скрытого FX нет.
+
+### Пример account с opening balance
+
+Ниже используются placeholder cookie jar и CSRF token; это не реальные секреты:
+
+```bash
+curl --request POST 'https://localhost:8000/api/v1/accounts' \
+  --cookie cookies.txt \
+  --header 'Content-Type: application/json' \
+  --header 'X-CSRF-Token: <csrf-token-from-cookie>' \
+  --header 'Idempotency-Key: account-20261013-001' \
+  --data '{
+    "name": "Основная карта",
+    "kind": "bank",
+    "currency": "RUB",
+    "opening_balance": {"amount": "15000.00", "currency": "RUB"},
+    "opening_balance_occurred_at": "2026-10-13T09:00:00+04:00"
+  }'
+```
+
+### Пример expense и следующей страницы
+
+```bash
+curl --request POST 'https://localhost:8000/api/v1/transactions/expense' \
+  --cookie cookies.txt \
+  --header 'Content-Type: application/json' \
+  --header 'X-CSRF-Token: <csrf-token-from-cookie>' \
+  --header 'Idempotency-Key: expense-20261013-001' \
+  --data '{
+    "account_id": "018f0000-0000-7000-8000-000000000001",
+    "category_id": "018f0000-0000-7000-8000-000000000002",
+    "money": {"amount": "1250.00", "currency": "RUB"},
+    "occurred_at": "2026-10-13T10:15:00+04:00",
+    "description": "Продукты",
+    "source": "manual",
+    "tag_ids": []
+  }'
+
+curl --get 'https://localhost:8000/api/v1/transactions' \
+  --cookie cookies.txt \
+  --data-urlencode 'limit=50' \
+  --data-urlencode 'cursor=<next_cursor-from-previous-response>'
+```
+
+Для обновления generated artifacts:
+
+```text
+poetry run python scripts/generate_api_client.py
+poetry run python scripts/generate_api_client.py --check
+```
 
 ## Health
 
@@ -62,6 +153,10 @@ LLM не является обязательной зависимостью read
 
 Validation errors дополнительно содержат `errors`; необработанные исключения не раскрывают
 внутреннее сообщение клиенту.
+
+Ledger-specific errors: `resource_not_found` (`404`, одинаково для отсутствующего и чужого
+resource), `idempotency_conflict`/`resource_conflict` (`409`), `invalid_cursor`,
+`invalid_date_range` и `domain_validation_error` (`422`).
 
 ## Request tracing
 

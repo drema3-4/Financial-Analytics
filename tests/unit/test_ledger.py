@@ -197,3 +197,30 @@ def test_income_expense_transfer_and_reversal_rebuild_from_postings() -> None:
     assert balances[cash.id] == Money.of("200", RUB)
     assert balances[income_side.id] == Money.of("-1000", RUB)
     assert balances[expense_side.id] == Money.of("0", RUB)
+
+
+def test_adjustment_is_an_exact_posting_not_income_or_expense() -> None:
+    bank = account(AccountKind.BANK)
+    equity = account(AccountKind.SYSTEM_EQUITY)
+    tag_id = uuid4()
+
+    adjustment = Transaction.adjustment(
+        id=uuid4(),
+        owner_id=OWNER,
+        asset=bank,
+        equity_account=equity,
+        amount=Money.of("-15.25", RUB),
+        occurred_at=NOW,
+        posting_ids=(uuid4(), uuid4()),
+        description="Statement reconciliation",
+        entry_source="manual",
+        tag_ids=(tag_id,),
+    )
+
+    assert adjustment.kind is TransactionKind.ADJUSTMENT
+    assert adjustment.category_id is None
+    assert adjustment.tag_ids == (tag_id,)
+    assert rebuild_balances((bank, equity), (adjustment,)) == {
+        bank.id: Money.of("-15.25", RUB),
+        equity.id: Money.of("15.25", RUB),
+    }

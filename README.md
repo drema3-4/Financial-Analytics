@@ -1,8 +1,9 @@
 # Financial Analytics
 
-Local-first приложение для учёта личных финансов. Этап 03 добавляет одноразовый bootstrap
-мастера, Argon2id login, ротируемые browser sessions, CSRF/CORS/rate limits, invite-only
-foundation и проверенную tenant isolation. Финансовый HTTP CRUD остаётся этапом 04.
+Local-first приложение для учёта личных финансов. Этап 04 даёт idempotent ledger API для
+accounts, categories, income/expense/transfer/adjustment/reversal, stable cursor pagination,
+UTF-8 CSV export и generated TypeScript client поверх double-entry domain core. Identity
+использует одноразовый master bootstrap, Argon2id и ротируемые cookie sessions с CSRF/CORS.
 
 Источники требований: [SPEC.md](SPEC.md), [PLAN.md](PLAN.md) и
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -92,6 +93,7 @@ poetry check --lock
 poetry run ruff check .
 poetry run ruff format --check .
 poetry run mypy
+poetry run python scripts/generate_api_client.py --check
 poetry run pytest
 ```
 
@@ -172,10 +174,10 @@ pnpm --filter @financial-analytics/web exec vite --host 127.0.0.1
 docker compose config --quiet
 ```
 
-Revision `20261013_0003` добавляет Identity/Profile таблицы к Finance и Control, constraints,
-индексы и deferred ledger triggers. CI проверяет upgrade на чистой PostgreSQL database,
-отсутствие drift между SQLAlchemy metadata и Alembic, integration tests и downgrade до
-пустого bootstrap revision. Полная схема и правила — в
+Revisions `20261013_0004`–`0005` добавляют adjustment/system-equity semantics, transaction
+source и immutable transaction tags для Ledger API. CI проверяет upgrade на чистой PostgreSQL
+database, отсутствие drift между SQLAlchemy metadata и Alembic, integration tests и downgrade
+до пустого bootstrap revision. Полная схема и правила — в
 [docs/DATA_MODEL.md](docs/DATA_MODEL.md). Security model — в
 [docs/SECURITY.md](docs/SECURITY.md).
 

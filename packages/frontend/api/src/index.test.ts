@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { isProfileResponse, isReadinessResponse } from "./index";
+import { FinancialAnalyticsClient, isProfileResponse, isReadinessResponse } from "./index";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("isReadinessResponse", () => {
   it("accepts only the documented ready database state", () => {
@@ -28,5 +32,50 @@ describe("isProfileResponse", () => {
     expect(isProfileResponse({ ...profile, status: "unknown" })).toBe(false);
     expect(isProfileResponse({ ...profile, is_master: "yes" })).toBe(false);
     expect(isProfileResponse(null)).toBe(false);
+  });
+});
+
+describe("generated FinancialAnalyticsClient", () => {
+  it("serializes exact-money create commands with cookies and idempotency headers", async () => {
+    const account = {
+      id: "018f0000-0000-7000-8000-000000000001",
+      name: "Bank",
+      kind: "bank",
+      currency: "RUB",
+      balance: { amount: "10.00", currency: "RUB" },
+      archived: false,
+      version: 1,
+    };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(account), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new FinancialAnalyticsClient("https://api.example.test");
+    await expect(
+      client.createAccount({
+        idempotencyKey: "account-1",
+        xCSRFToken: "csrf-value",
+        body: {
+          name: "Bank",
+          kind: "bank",
+          currency: "RUB",
+          opening_balance: { amount: "10.00", currency: "RUB" },
+        },
+      }),
+    ).resolves.toEqual(account);
+
+    const [url, options] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.example.test/api/v1/accounts");
+    expect(options.method).toBe("POST");
+    expect(options.credentials).toBe("include");
+    expect(options.headers).toMatchObject({
+      "Idempotency-Key": "account-1",
+      "X-CSRF-Token": "csrf-value",
+      "Content-Type": "application/json",
+    });
   });
 });
