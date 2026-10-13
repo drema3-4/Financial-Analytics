@@ -1,7 +1,8 @@
 # Financial Analytics
 
-Local-first приложение для учёта личных финансов. Этап 01 содержит запускаемый каркас без
-финансовых бизнес-функций: FastAPI API, отдельный worker, React/Vite web и PostgreSQL.
+Local-first приложение для учёта личных финансов. Этап 02 добавляет framework-independent
+финансовый домен, double-entry ledger, owner-scoped PostgreSQL repositories и аудируемые
+миграции. HTTP CRUD намеренно остаётся за границей текущего этапа.
 
 Источники требований: [SPEC.md](SPEC.md), [PLAN.md](PLAN.md) и
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -18,7 +19,7 @@ docker compose up --build --wait
 ```
 
 Команда собирает закреплённые Python/Node images, запускает PostgreSQL, применяет Alembic
-baseline и ждёт healthchecks API, worker и web. LLM не входит в core stack и не влияет на
+миграции и ждёт healthchecks API, worker и web. LLM не входит в core stack и не влияет на
 startup. Для zero-config локального запуска Compose использует пароль
 `financial_analytics_dev`; PostgreSQL не публикуется на host. Это только development default.
 Чтобы задать свой пароль до первого запуска, создайте `.env` из `.env.example` и замените
@@ -165,9 +166,11 @@ pnpm --filter @financial-analytics/web exec vite --host 127.0.0.1
 docker compose config --quiet
 ```
 
-Baseline не создаёт доменных таблиц. `migrate` создаёт только служебную таблицу
-`alembic_version` и фиксирует revision `20261013_0001`. CI проверяет upgrade на отдельной
-чистой PostgreSQL service database и отсутствие расхождений metadata/migrations.
+Revision `20261013_0002` создаёт Identity shell, Finance и Control таблицы, constraints,
+индексы и deferred ledger triggers. CI проверяет upgrade на чистой PostgreSQL database,
+отсутствие drift между SQLAlchemy metadata и Alembic, integration tests и downgrade до
+пустого bootstrap revision. Полная схема и правила — в
+[docs/DATA_MODEL.md](docs/DATA_MODEL.md).
 
 ## Структура
 
@@ -180,6 +183,7 @@ packages/backend/app/        use cases and ports boundary
 packages/backend/infra/      settings и database adapters
 packages/frontend/api/       общие TypeScript API contracts
 tests/unit/                  backend unit/component tests
+tests/integration/           PostgreSQL repositories, invariants и migrations
 tests/contract/              OpenAPI contract tests
 infra/docker/                non-root runtime images
 migrations/                  Alembic environment и revisions

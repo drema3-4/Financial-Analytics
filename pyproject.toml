@@ -33,6 +33,7 @@ mypy = ">=1.14,<2"
 pytest = ">=8.3,<10"
 pytest-cov = ">=6,<8"
 ruff = ">=0.9,<1"
+hypothesis = ">=6.100,<7"
 
 [tool.ruff]
 target-version = "py312"
@@ -60,6 +61,7 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --cov=financial_analytics_api --cov=financial_analytics_worker --cov=financial_analytics_app --cov=financial_analytics_domain --cov=financial_analytics_infra --cov-branch --cov-report=term-missing --cov-fail-under=85"
 testpaths = ["tests"]
+markers = ["integration: requires a disposable PostgreSQL database"]
 
 [build-system]
 requires = ["poetry-core>=2.0,<3"]

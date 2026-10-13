@@ -1,0 +1,408 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+from types import TracebackType
+from uuid import UUID, uuid4
+
+from sqlalchemy import Select, func, select, update
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from financial_analytics_app.ports import (
+    AuditEvent,
+    AuditRepository,
+    IdempotencyRecord,
+    IdempotencyRepository,
+    LedgerRepository,
+    UnitOfWork,
+)
+from financial_analytics_app.services import ConcurrentModificationError
+from financial_analytics_domain import (
+    Account,
+    AccountKind,
+    Category,
+    CategoryGroup,
+    Currency,
+    Instant,
+    Money,
+    Posting,
+    Tag,
+    Transaction,
+    TransactionKind,
+)
+from financial_analytics_domain.errors import OwnershipError
+from financial_analytics_infra.models import (
+    AccountModel,
+    AuditEventModel,
+    CategoryGroupModel,
+    CategoryModel,
+    IdempotencyRecordModel,
+    PostingModel,
+    TagModel,
+    TransactionModel,
+)
+
+
+class PostgresLedgerRepository:
+    """PostgreSQL adapter whose constructor makes owner scope mandatory."""
+
+    def __init__(self, session: Session, owner_id: UUID) -> None:
+        self._session = session
+        self._owner_id = owner_id
+
+    @property
+    def owner_id(self) -> UUID:
+        return self._owner_id
+
+    def _require_owner(self, entity_owner_id: UUID) -> None:
+        if entity_owner_id != self._owner_id:
+            raise OwnershipError("repository scope does not match entity owner")
+
+    def add_account(self, account: Account) -> None:
+        self._require_owner(account.owner_id)
+        self._session.add(
+            AccountModel(
+                id=account.id,
+                owner_id=account.owner_id,
+                name=account.name,
+                kind=account.kind.value,
+                currency=account.currency.code,
+                archived=account.archived,
+                version=account.version,
+            )
+        )
+
+    def get_account(self, account_id: UUID) -> Account | None:
+        row = self._session.scalar(
+            select(AccountModel).where(
+                AccountModel.owner_id == self._owner_id, AccountModel.id == account_id
+            )
+        )
+        return None if row is None else _account_from_row(row)
+
+    def save_account(self, account: Account) -> Account:
+        self._require_owner(account.owner_id)
+        new_version = account.version + 1
+        changed_id = self._session.scalar(
+            update(AccountModel)
+            .where(
+                AccountModel.owner_id == self._owner_id,
+                AccountModel.id == account.id,
+                AccountModel.version == account.version,
+            )
+            .values(
+                name=account.name,
+                kind=account.kind.value,
+                currency=account.currency.code,
+                archived=account.archived,
+                version=new_version,
+                updated_at=func.now(),
+            )
+            .returning(AccountModel.id)
+        )
+        if changed_id is None:
+            raise ConcurrentModificationError("account version is stale or account is absent")
+        return Account(
+            id=account.id,
+            owner_id=account.owner_id,
+            name=account.name,
+            currency=account.currency,
+            kind=account.kind,
+            archived=account.archived,
+            version=new_version,
+        )
+
+    def add_category_group(self, group: CategoryGroup) -> None:
+        self._require_owner(group.owner_id)
+        self._session.add(
+            CategoryGroupModel(
+                id=group.id,
+                owner_id=group.owner_id,
+                parent_id=group.parent_id,
+                name=group.name,
+                version=group.version,
+            )
+        )
+
+    def add_category(self, category: Category) -> None:
+        self._require_owner(category.owner_id)
+        self._session.add(
+            CategoryModel(
+                id=category.id,
+                owner_id=category.owner_id,
+                group_id=category.group_id,
+                name=category.name,
+                kind=category.kind.value,
+                version=category.version,
+            )
+        )
+
+    def add_tag(self, tag: Tag) -> None:
+        self._require_owner(tag.owner_id)
+        self._session.add(
+            TagModel(
+                id=tag.id,
+                owner_id=tag.owner_id,
+                name=tag.name,
+                version=tag.version,
+            )
+        )
+
+    def add_transaction(
+        self,
+        transaction: Transaction,
+        *,
+        actor_id: UUID,
+        request_id: UUID | None,
+    ) -> None:
+        self._require_owner(transaction.owner_id)
+        if actor_id != self._owner_id:
+            raise OwnershipError("transaction actor is outside repository scope")
+        row = TransactionModel(
+            id=transaction.id,
+            owner_id=transaction.owner_id,
+            actor_id=actor_id,
+            request_id=request_id,
+            category_id=transaction.category_id,
+            reversal_of_id=transaction.reversal_of_id,
+            kind=transaction.kind.value,
+            status="pending",
+            currency=transaction.currency.code,
+            description=transaction.description,
+            occurred_at=transaction.occurred_at.value,
+            version=transaction.version,
+        )
+        self._session.add(row)
+        self._session.flush()
+        self._session.add_all(
+            [
+                PostingModel(
+                    id=posting.id,
+                    owner_id=transaction.owner_id,
+                    transaction_id=transaction.id,
+                    account_id=posting.account_id,
+                    reversal_of_id=posting.reversal_of_id,
+                    line_no=line_no,
+                    currency=posting.amount.currency.code,
+                    amount=posting.amount.amount,
+                )
+                for line_no, posting in enumerate(transaction.postings, start=1)
+            ]
+        )
+        self._session.flush()
+        row.status = "posted"
+        self._session.flush()
+
+    def get_transaction(self, transaction_id: UUID) -> Transaction | None:
+        row = self._session.scalar(self._transaction_query(transaction_id))
+        if row is None:
+            return None
+        postings = self._session.scalars(
+            select(PostingModel)
+            .where(
+                PostingModel.owner_id == self._owner_id,
+                PostingModel.transaction_id == transaction_id,
+            )
+            .order_by(PostingModel.line_no)
+        ).all()
+        return _transaction_from_rows(row, postings)
+
+    def _transaction_query(self, transaction_id: UUID) -> Select[TransactionModel]:
+        return select(TransactionModel).where(
+            TransactionModel.owner_id == self._owner_id,
+            TransactionModel.id == transaction_id,
+            TransactionModel.status == "posted",
+        )
+
+    def list_postings(self, account_id: UUID | None = None) -> tuple[Posting, ...]:
+        query = (
+            select(PostingModel)
+            .join(
+                TransactionModel,
+                (TransactionModel.owner_id == PostingModel.owner_id)
+                & (TransactionModel.id == PostingModel.transaction_id),
+            )
+            .where(
+                PostingModel.owner_id == self._owner_id,
+                TransactionModel.status == "posted",
+            )
+            .order_by(PostingModel.created_at, PostingModel.line_no)
+        )
+        if account_id is not None:
+            query = query.where(PostingModel.account_id == account_id)
+        return tuple(_posting_from_row(row) for row in self._session.scalars(query))
+
+    def rebuild_balances(self) -> dict[UUID, Money]:
+        accounts = self._session.execute(
+            select(AccountModel.id, AccountModel.currency).where(
+                AccountModel.owner_id == self._owner_id
+            )
+        ).all()
+        totals = dict(
+            self._session.execute(
+                select(PostingModel.account_id, func.sum(PostingModel.amount))
+                .join(
+                    TransactionModel,
+                    (TransactionModel.owner_id == PostingModel.owner_id)
+                    & (TransactionModel.id == PostingModel.transaction_id),
+                )
+                .where(
+                    PostingModel.owner_id == self._owner_id,
+                    TransactionModel.status == "posted",
+                )
+                .group_by(PostingModel.account_id)
+            ).all()
+        )
+        return {
+            account_id: Money.of(totals.get(account_id, 0), Currency(currency))
+            for account_id, currency in accounts
+        }
+
+
+class PostgresAuditRepository:
+    def __init__(self, session: Session, owner_id: UUID) -> None:
+        self._session = session
+        self._owner_id = owner_id
+
+    def append(self, event: AuditEvent) -> None:
+        if event.owner_id != self._owner_id:
+            raise OwnershipError("audit event is outside repository scope")
+        self._session.add(
+            AuditEventModel(
+                id=event.id,
+                owner_id=event.owner_id,
+                actor_id=event.actor_id,
+                request_id=event.request_id,
+                event_type=event.event_type,
+                aggregate_type=event.aggregate_type,
+                aggregate_id=event.aggregate_id,
+                occurred_at=event.occurred_at.value,
+                payload=event.payload or {},
+            )
+        )
+
+
+class PostgresIdempotencyRepository:
+    def __init__(self, session: Session, owner_id: UUID) -> None:
+        self._session = session
+        self._owner_id = owner_id
+
+    def get(self, scope: str, key: str) -> IdempotencyRecord | None:
+        row = self._session.scalar(
+            select(IdempotencyRecordModel).where(
+                IdempotencyRecordModel.owner_id == self._owner_id,
+                IdempotencyRecordModel.scope == scope,
+                IdempotencyRecordModel.idempotency_key == key,
+            )
+        )
+        if row is None:
+            return None
+        return IdempotencyRecord(
+            owner_id=row.owner_id,
+            scope=row.scope,
+            key=row.idempotency_key,
+            request_hash=row.request_hash,
+            resource_type=row.resource_type,
+            resource_id=row.resource_id,
+            created_at=Instant(row.created_at),
+        )
+
+    def add(self, record: IdempotencyRecord) -> None:
+        if record.owner_id != self._owner_id:
+            raise OwnershipError("idempotency record is outside repository scope")
+        self._session.add(
+            IdempotencyRecordModel(
+                id=uuid4(),
+                owner_id=record.owner_id,
+                scope=record.scope,
+                idempotency_key=record.key,
+                request_hash=record.request_hash,
+                resource_type=record.resource_type,
+                resource_id=record.resource_id,
+                created_at=record.created_at.value,
+            )
+        )
+
+
+class PostgresUnitOfWork:
+    ledger: LedgerRepository
+    audit: AuditRepository
+    idempotency: IdempotencyRepository
+
+    def __init__(self, session_factory: sessionmaker[Session], owner_id: UUID) -> None:
+        self._session = session_factory()
+        self._committed = False
+        self.ledger = PostgresLedgerRepository(self._session, owner_id)
+        self.audit = PostgresAuditRepository(self._session, owner_id)
+        self.idempotency = PostgresIdempotencyRepository(self._session, owner_id)
+
+    def __enter__(self) -> PostgresUnitOfWork:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        if exc_type is not None or not self._committed:
+            self.rollback()
+        self._session.close()
+
+    def commit(self) -> None:
+        try:
+            self._session.commit()
+        except Exception:
+            self._session.rollback()
+            raise
+        self._committed = True
+
+    def rollback(self) -> None:
+        self._session.rollback()
+
+
+class PostgresUnitOfWorkFactory:
+    def __init__(self, engine: Engine) -> None:
+        self._session_factory = sessionmaker(engine, expire_on_commit=False)
+
+    def open(self, owner_id: UUID) -> UnitOfWork:
+        return PostgresUnitOfWork(self._session_factory, owner_id)
+
+
+def _account_from_row(row: AccountModel) -> Account:
+    return Account(
+        id=row.id,
+        owner_id=row.owner_id,
+        name=row.name,
+        kind=AccountKind(row.kind),
+        currency=Currency(row.currency),
+        archived=row.archived,
+        version=row.version,
+    )
+
+
+def _posting_from_row(row: PostingModel) -> Posting:
+    return Posting(
+        id=row.id,
+        transaction_id=row.transaction_id,
+        account_id=row.account_id,
+        amount=Money.of(row.amount, Currency(row.currency)),
+        reversal_of_id=row.reversal_of_id,
+    )
+
+
+def _transaction_from_rows(
+    row: TransactionModel, posting_rows: Sequence[PostingModel]
+) -> Transaction:
+    return Transaction(
+        id=row.id,
+        owner_id=row.owner_id,
+        kind=TransactionKind(row.kind),
+        currency=Currency(row.currency),
+        occurred_at=Instant(row.occurred_at),
+        postings=tuple(_posting_from_row(posting) for posting in posting_rows),
+        description=row.description,
+        category_id=row.category_id,
+        reversal_of_id=row.reversal_of_id,
+        version=row.version,
+    )

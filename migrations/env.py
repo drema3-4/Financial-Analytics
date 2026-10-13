@@ -5,6 +5,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from financial_analytics_infra import models as persistence_models  # noqa: F401
 from financial_analytics_infra.database import Base
 from financial_analytics_infra.settings import Settings
 

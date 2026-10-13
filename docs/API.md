@@ -1,7 +1,9 @@
-# Bootstrap API contract
+# API contract through milestone 02
 
-Контракт этапа 01 не содержит финансовых ресурсов. FastAPI публикует актуальную OpenAPI-схему
-по `/openapi.json` и интерактивную документацию по `/docs`.
+Этап 02 намеренно не добавляет HTTP CRUD: финансовый домен, use-case ports и PostgreSQL
+adapters находятся под API boundary. Поэтому публичный контракт всё ещё содержит только
+health endpoints. FastAPI публикует актуальную OpenAPI-схему по `/openapi.json` и
+интерактивную документацию по `/docs`.
 
 ## Health
 
