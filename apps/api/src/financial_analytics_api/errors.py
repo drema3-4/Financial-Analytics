@@ -9,6 +9,17 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from financial_analytics_app.identity import (
+    BootstrapClosedError,
+    CsrfValidationError,
+    DisabledUserError,
+    EmailNotAllowedError,
+    EmailTokenInvalidError,
+    InvalidCredentialsError,
+    InvalidSessionError,
+    RateLimitExceededError,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +62,7 @@ def _problem_response(
     title: str,
     detail: str,
     errors: list[dict[str, Any]] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     request_id = getattr(request.state, "request_id", "unavailable")
     correlation_id = getattr(request.state, "correlation_id", request_id)
@@ -69,10 +81,98 @@ def _problem_response(
         status_code=status,
         content=problem.model_dump(exclude_none=True),
         media_type="application/problem+json",
+        headers=headers,
     )
 
 
 def install_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(BootstrapClosedError)
+    async def bootstrap_closed_handler(request: Request, exc: BootstrapClosedError) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=409,
+            code="bootstrap_closed",
+            title="Bootstrap closed",
+            detail="The master account has already been created.",
+        )
+
+    @app.exception_handler(InvalidCredentialsError)
+    async def invalid_credentials_handler(
+        request: Request, exc: InvalidCredentialsError
+    ) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=401,
+            code="invalid_credentials",
+            title="Authentication failed",
+            detail="The supplied credentials are invalid.",
+        )
+
+    @app.exception_handler(InvalidSessionError)
+    async def invalid_session_handler(request: Request, exc: InvalidSessionError) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=401,
+            code="invalid_session",
+            title="Authentication required",
+            detail="The session is missing, expired, revoked, or invalid.",
+        )
+
+    @app.exception_handler(CsrfValidationError)
+    async def csrf_handler(request: Request, exc: CsrfValidationError) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=403,
+            code="csrf_validation_failed",
+            title="Request rejected",
+            detail="A valid CSRF token is required for this request.",
+        )
+
+    @app.exception_handler(DisabledUserError)
+    async def disabled_user_handler(request: Request, exc: DisabledUserError) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=403,
+            code="user_disabled",
+            title="Account disabled",
+            detail="This account is disabled.",
+        )
+
+    @app.exception_handler(RateLimitExceededError)
+    async def rate_limit_handler(request: Request, exc: RateLimitExceededError) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=429,
+            code="rate_limit_exceeded",
+            title="Too many requests",
+            detail="Try again after the indicated delay.",
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        )
+
+    @app.exception_handler(EmailNotAllowedError)
+    async def email_not_allowed_handler(
+        request: Request, exc: EmailNotAllowedError
+    ) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=403,
+            code="email_not_allowed",
+            title="Email not allowed",
+            detail="This email address is not eligible for an invitation.",
+        )
+
+    @app.exception_handler(EmailTokenInvalidError)
+    async def invalid_email_token_handler(
+        request: Request, exc: EmailTokenInvalidError
+    ) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=400,
+            code="invalid_email_token",
+            title="Invalid email token",
+            detail="The token is invalid, expired, revoked, or already used.",
+        )
+
     @app.exception_handler(ApplicationError)
     async def application_error_handler(request: Request, exc: ApplicationError) -> JSONResponse:
         return _problem_response(

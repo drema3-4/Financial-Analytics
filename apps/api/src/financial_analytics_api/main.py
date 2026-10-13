@@ -9,9 +9,17 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from financial_analytics_api.errors import install_error_handlers
 from financial_analytics_api.health import router as health_router
+from financial_analytics_api.identity import router as identity_router
 from financial_analytics_api.logging import configure_logging
 from financial_analytics_api.middleware import RequestContextMiddleware
+from financial_analytics_app.identity import AuthService
 from financial_analytics_infra.database import Database
+from financial_analytics_infra.identity import PostgresIdentityStore
+from financial_analytics_infra.security import (
+    Argon2idPasswordHashes,
+    HmacSecretProvider,
+    InMemorySlidingWindowRateLimiter,
+)
 from financial_analytics_infra.settings import Settings
 
 ReadinessCheck = Callable[[], Awaitable[bool]]
@@ -20,10 +28,22 @@ ReadinessCheck = Callable[[], Awaitable[bool]]
 def create_app(
     settings: Settings | None = None,
     readiness_check: ReadinessCheck | None = None,
+    auth_service: AuthService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
     configure_logging(resolved_settings.log_level)
     database: Database | None = None
+    identity_store: PostgresIdentityStore | None = None
+
+    if auth_service is None:
+        identity_store = PostgresIdentityStore(resolved_settings.database_url)
+        auth_service = AuthService(
+            identity_store,
+            Argon2idPasswordHashes(),
+            HmacSecretProvider(resolved_settings.session_secret),
+            HmacSecretProvider(resolved_settings.csrf_secret),
+            InMemorySlidingWindowRateLimiter(),
+        )
 
     if readiness_check is None:
         database = Database(resolved_settings.database_url)
@@ -39,6 +59,8 @@ def create_app(
         yield
         if database is not None:
             database.close()
+        if identity_store is not None:
+            identity_store.close()
 
     app = FastAPI(
         title=resolved_settings.app_name,
@@ -47,16 +69,25 @@ def create_app(
     )
     app.state.settings = resolved_settings
     app.state.readiness_check = readiness_check
+    app.state.auth_service = auth_service
     app.add_middleware(
         CORSMiddleware,
         allow_origins=resolved_settings.cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Accept", "Content-Type", "X-Correlation-ID", "X-Request-ID"],
+        allow_headers=[
+            "Accept",
+            "Content-Type",
+            "X-Correlation-ID",
+            "X-CSRF-Token",
+            "X-Request-ID",
+        ],
+        expose_headers=["Retry-After", "X-Correlation-ID", "X-Request-ID"],
     )
     app.add_middleware(RequestContextMiddleware)
     install_error_handlers(app)
     app.include_router(health_router)
+    app.include_router(identity_router)
     return app
 
 

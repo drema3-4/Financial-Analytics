@@ -110,12 +110,20 @@ Advice orchestrator получает `AdviceContext`: агрегаты, цели
 
 ## 7. Аутентификация
 
-- Пароли хэшируются Argon2id с параметрами, которые можно мигрировать.
-- Короткая access session и ротируемый refresh token; refresh хранится в хэшированном виде и передаётся защищённой HttpOnly cookie.
-- CSRF-защита применяется ко всем cookie-authenticated мутациям; CORS ограничен известным origin.
-- Токены email одноразовые, хэшированные в БД и имеют короткий TTL.
-- Первый мастер создаётся одноразовой bootstrap-командой/переменными; после успешного bootstrap повтор отключён.
-- Allowlist проверяется и при приглашении, и при завершении регистрации.
+- Пароли хэшируются Argon2id с параметрами в encoded hash и opportunistic rehash при login.
+- Короткий opaque access и ротируемый opaque refresh содержат 256-bit secret; в PostgreSQL
+  сохраняются только HMAC-SHA-256 digests. Refresh rotation атомарна, replay отзывает session.
+- Access/refresh передаются в `HttpOnly; Secure; SameSite=Strict` cookies. CSRF использует
+  отдельный double-submit secret, server-side binding и `X-CSRF-Token` для всех
+  cookie-authenticated мутаций.
+- CORS разрешает credentials только явным origins; wildcard не принимается даже в development.
+- Токены email одноразовые, хэшированные, имеют TTL и subject/purpose binding.
+- Первый мастер создаётся под PostgreSQL advisory lock; partial unique constraint навсегда
+  закрывает повторный bootstrap после commit.
+- Allowlist проверяется при создании приглашения и атомарном consumption токена.
+- Login/refresh проходят через application `RateLimiter`; локальный adapter — sliding window
+  в памяти одного API process. Server adapter перед горизонтальным масштабированием обязан
+  делить состояние между replicas.
 
 ## 8. Фоновые задания
 

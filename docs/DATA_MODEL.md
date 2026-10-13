@@ -1,4 +1,4 @@
-# Модель финансовых данных
+# Модель данных
 
 Этап 02 реализует double-entry ledger как единственный источник фактических остатков.
 Проведённая операция неизменяема; исправление — новая reversal transaction с причинными
@@ -80,7 +80,13 @@ erDiagram
     }
 ```
 
-`users` — только Identity shell. Credential/session/profile появляются не раньше этапа 03.
+Этап 03 расширяет `users` состоянием `active/disabled` и единственным `is_master`, а также
+добавляет `user_profiles`, `credentials`, `sessions`, `email_allowlist`, `invitations` и
+`email_tokens`. Email нормализуется до lowercase; password hash — Argon2id encoded string.
+Session и email token содержат только 64-символьные HMAC-SHA-256 digests, никогда raw secret.
+Refresh и email-token consumption выполняются под row lock; TTL, revoke и consumed state
+проверяются в той же транзакции, что и mutation/audit.
+
 Finance включает `accounts`, `category_groups`, `categories`, `tags`, `transactions`,
 `postings`, `transaction_tags`. Control включает append-only `audit_events`, append-only
 `idempotency_records` и глобальную `schema_metadata`.
@@ -146,7 +152,7 @@ scope, составных owner FK и integration tests с двумя владе
 
 ## Миграции и downgrade
 
-`20261013_0002` применяется на чистую БД и проверяется `alembic check`. Downgrade до
+`20261013_0003` применяется на чистую БД и проверяется `alembic check`. Downgrade до
 `20261013_0001` удаляет финансовую схему и поэтому тестируется только на пустой disposable
 database. Для БД с реальными данными такой downgrade разрушителен и не является рабочей
 процедурой отката; используется forward fix/backup restore.

@@ -110,3 +110,30 @@ triggers запрещают commit pending/несбалансированног�
 **Почему:** финансовые таблицы уже должны доказывать tenant isolation, но реализация
 аутентификации до human gate нарушила бы последовательность `PLAN.md`.
 
+## ADR-012: opaque browser sessions, double-submit CSRF и локальный rate limiter
+
+**Дата:** 2026-10-13.
+
+**Решение:** браузер получает два независимых opaque bearer token: короткий access и
+долгоживущий refresh. Оба содержат случайный secret и идентификатор server-side session;
+в PostgreSQL сохраняются только HMAC-SHA-256 digests secret. Refresh при каждом успешном
+использовании атомарно заменяет access, refresh и CSRF secret, не продлевая абсолютный
+30-дневный срок. Повтор старого refresh всегда отклоняется; если запрос также доказывает
+владение текущим session-bound CSRF secret, atomic compare отзывает session как replay.
+
+Access и refresh передаются только в `HttpOnly; Secure; SameSite=Strict` cookies. Отдельный
+случайный CSRF secret доступен JavaScript в `Secure; SameSite=Strict` cookie, привязан к
+session своим HMAC digest и должен совпасть с `X-CSRF-Token` для cookie-authenticated
+мутаций. CORS принимает credentials только от явного allowlist origins; wildcard запрещён
+во всех средах.
+
+Application boundary получает `RateLimiter` port. Этап 03 использует thread-safe sliding
+window в памяти процесса для login и refresh. Перед горизонтальным server deployment порт
+должен получить общий durable/Redis adapter, но локальный core не получает новый сервис.
+
+**Почему:** opaque sessions позволяют немедленно отзывать отдельную или все сессии, не
+помещают claims в браузер и дают однозначную rotation/replay semantics. Раздельные secrets
+сокращают последствия утечки одного cookie. Double-submit с server-side binding защищает
+cookie-аутентифицированные мутации, а строгий CORS не полагается на wildcard. Локальному
+однопроцессному MVP достаточно in-memory limiter без преждевременной инфраструктуры.
+

@@ -30,14 +30,156 @@ MONEY_SCALE = 9
 
 
 class UserModel(Base):
-    """Identity-owned shell; credentials and sessions belong to milestone 03."""
+    """Identity root shared by authentication and tenant-owned data."""
+
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'disabled')", name="user_status"),
+        Index(
+            "uq_users_single_master",
+            "is_master",
+            unique=True,
+            postgresql_where=text("is_master"),
+        ),
+    )
 
     __tablename__ = "users"
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'active'"))
+    is_master: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class UserProfileModel(Base):
+    __tablename__ = "user_profiles"
+    __table_args__ = (
+        CheckConstraint("base_currency ~ '^[A-Z]{3}$'", name="profile_base_currency"),
+        CheckConstraint("char_length(locale) BETWEEN 2 AND 6", name="profile_locale"),
+        CheckConstraint("char_length(timezone) BETWEEN 1 AND 100", name="profile_timezone"),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    base_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    locale: Mapped[str] = mapped_column(String(16), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialModel(Base):
+    __tablename__ = "credentials"
+    __table_args__ = (
+        CheckConstraint("email = lower(email)", name="credential_email_normalized"),
+        CheckConstraint("char_length(password_hash) > 20", name="credential_password_hash"),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    email: Mapped[str] = mapped_column(String(254), nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    password_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SessionModel(Base):
+    __tablename__ = "sessions"
+    __table_args__ = (
+        CheckConstraint("char_length(access_hash) = 64", name="session_access_hash"),
+        CheckConstraint("char_length(refresh_hash) = 64", name="session_refresh_hash"),
+        CheckConstraint("char_length(csrf_hash) = 64", name="session_csrf_hash"),
+        CheckConstraint("access_expires_at <= refresh_expires_at", name="session_expiry_order"),
+        Index("ix_sessions_owner_id_revoked_at", "owner_id", "revoked_at"),
+        Index("ix_sessions_refresh_expires_at", "refresh_expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    access_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    refresh_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    csrf_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    access_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    refresh_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    rotated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EmailAllowlistModel(Base):
+    __tablename__ = "email_allowlist"
+    __table_args__ = (
+        CheckConstraint("email = lower(email)", name="allowlist_email_normalized"),
+        Index("ix_email_allowlist_active", "email", postgresql_where=text("revoked_at IS NULL")),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), nullable=False, unique=True)
+    added_by: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class InvitationModel(Base):
+    __tablename__ = "invitations"
+    __table_args__ = (
+        CheckConstraint("email = lower(email)", name="invitation_email_normalized"),
+        CheckConstraint("expires_at > created_at", name="invitation_expiry"),
+        Index("ix_invitations_email_created_at", "email", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), nullable=False)
+    invited_by: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EmailTokenModel(Base):
+    __tablename__ = "email_tokens"
+    __table_args__ = (
+        CheckConstraint(
+            "purpose IN ('invitation', 'verify_email', 'reset_password')",
+            name="email_token_purpose",
+        ),
+        CheckConstraint("char_length(token_hash) = 64", name="email_token_hash"),
+        CheckConstraint(
+            "(user_id IS NULL) <> (invitation_id IS NULL)", name="email_token_single_subject"
+        ),
+        CheckConstraint("expires_at > created_at", name="email_token_expiry"),
+        Index("ix_email_tokens_expires_at", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    user_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    invitation_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("invitations.id", ondelete="RESTRICT")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AccountModel(Base):

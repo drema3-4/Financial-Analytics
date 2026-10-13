@@ -1,5 +1,13 @@
-"""Framework-independent financial domain."""
+"""Framework-independent application domain."""
 
+from financial_analytics_domain.identity import (
+    EmailAddress,
+    EmailToken,
+    EmailTokenPurpose,
+    Invitation,
+    UserProfile,
+    UserStatus,
+)
 from financial_analytics_domain.ledger import (
     Account,
     AccountKind,
@@ -29,7 +37,11 @@ __all__ = [
     "CategoryKind",
     "Currency",
     "DateRange",
+    "EmailAddress",
+    "EmailToken",
+    "EmailTokenPurpose",
     "Instant",
+    "Invitation",
     "Money",
     "Posting",
     "Rate",
@@ -37,5 +49,7 @@ __all__ = [
     "Tag",
     "Transaction",
     "TransactionKind",
+    "UserProfile",
+    "UserStatus",
     "rebuild_balances",
 ]

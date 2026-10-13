@@ -5,6 +5,10 @@ x-backend-environment: &backend-environment
   CORS_ORIGINS: '["http://localhost:4173"]'
   DATABASE_URL: postgresql+psycopg://financial_analytics:${POSTGRES_PASSWORD:-financial_analytics_dev}@postgres:5432/financial_analytics
   LOG_LEVEL: INFO
+  SESSION_SECRET: ${SESSION_SECRET:-development-session-key-change-me-0001}
+  CSRF_SECRET: ${CSRF_SECRET:-development-csrf-key-change-me-now-0001}
+  EMAIL_TOKEN_SECRET: ${EMAIL_TOKEN_SECRET:-development-email-key-change-me-now-0001}
+  SESSION_COOKIE_SECURE: "true"
 
 x-backend: &backend
   image: financial-analytics-backend:01

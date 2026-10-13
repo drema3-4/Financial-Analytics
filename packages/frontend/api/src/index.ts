@@ -21,6 +21,30 @@ export interface ProblemDetails {
   errors?: Record<string, unknown>[];
 }
 
+export interface BootstrapRequest {
+  email: string;
+  password: string;
+  base_currency: string;
+  locale: string;
+  timezone: string;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface ProfileResponse {
+  id: string;
+  email: string;
+  base_currency: string;
+  locale: string;
+  timezone: string;
+  status: "active" | "disabled";
+  is_master: boolean;
+  created_at: string;
+}
+
 export function isReadinessResponse(value: unknown): value is ReadinessResponse {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -34,5 +58,22 @@ export function isReadinessResponse(value: unknown): value is ReadinessResponse 
     typeof checks === "object" &&
     checks !== null &&
     (checks as Record<string, unknown>).database === "up"
+  );
+}
+
+export function isProfileResponse(value: unknown): value is ProfileResponse {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.email === "string" &&
+    typeof candidate.base_currency === "string" &&
+    typeof candidate.locale === "string" &&
+    typeof candidate.timezone === "string" &&
+    (candidate.status === "active" || candidate.status === "disabled") &&
+    typeof candidate.is_master === "boolean" &&
+    typeof candidate.created_at === "string"
   );
 }

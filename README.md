@@ -1,8 +1,8 @@
 # Financial Analytics
 
-Local-first приложение для учёта личных финансов. Этап 02 добавляет framework-independent
-финансовый домен, double-entry ledger, owner-scoped PostgreSQL repositories и аудируемые
-миграции. HTTP CRUD намеренно остаётся за границей текущего этапа.
+Local-first приложение для учёта личных финансов. Этап 03 добавляет одноразовый bootstrap
+мастера, Argon2id login, ротируемые browser sessions, CSRF/CORS/rate limits, invite-only
+foundation и проверенную tenant isolation. Финансовый HTTP CRUD остаётся этапом 04.
 
 Источники требований: [SPEC.md](SPEC.md), [PLAN.md](PLAN.md) и
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -31,6 +31,12 @@ placeholder.
 - API docs: <http://localhost:8000/docs>;
 - liveness: <http://localhost:8000/health/live>;
 - readiness: <http://localhost:8000/health/ready>.
+
+Первый мастер создаётся один раз через `POST /api/v1/auth/bootstrap`; контракт доступен в
+`/docs`. Задайте email, пароль длиной от 12 символов, базовую валюту, locale и IANA timezone.
+Успешный ответ устанавливает Secure/HttpOnly session cookies, после чего повторный bootstrap
+возвращает `409`. Для production обязательно замените три identity secrets из `.env.example`;
+процедуры ротации описаны в [docs/SECURITY.md](docs/SECURITY.md).
 
 `/health/live` сообщает о работе процесса. `/health/ready` возвращает `200` только после
 успешного `SELECT 1` в PostgreSQL; при недоступности БД API продолжает стартовать и возвращает
@@ -166,11 +172,12 @@ pnpm --filter @financial-analytics/web exec vite --host 127.0.0.1
 docker compose config --quiet
 ```
 
-Revision `20261013_0002` создаёт Identity shell, Finance и Control таблицы, constraints,
+Revision `20261013_0003` добавляет Identity/Profile таблицы к Finance и Control, constraints,
 индексы и deferred ledger triggers. CI проверяет upgrade на чистой PostgreSQL database,
 отсутствие drift между SQLAlchemy metadata и Alembic, integration tests и downgrade до
 пустого bootstrap revision. Полная схема и правила — в
-[docs/DATA_MODEL.md](docs/DATA_MODEL.md).
+[docs/DATA_MODEL.md](docs/DATA_MODEL.md). Security model — в
+[docs/SECURITY.md](docs/SECURITY.md).
 
 ## Структура
 

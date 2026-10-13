@@ -23,6 +23,7 @@ from financial_analytics_domain import (
     Money,
     Transaction,
 )
+from financial_analytics_domain.errors import OwnershipError
 from financial_analytics_infra.models import (
     AccountModel,
     AuditEventModel,
@@ -70,6 +71,8 @@ def test_repository_api_is_owner_scoped(postgres_engine: Engine) -> None:
         assert uow.ledger.get_account(second.id) is None
         assert uow.ledger.list_postings(second.id) == ()
         assert set(uow.ledger.rebuild_balances()) == {first.id}
+        with pytest.raises(OwnershipError):
+            uow.ledger.save_account(replace(second, name="Cross-tenant write"))
 
 
 def test_database_rejects_unbalanced_posted_transaction(postgres_engine: Engine) -> None:
@@ -191,9 +194,30 @@ def test_record_reversal_audit_idempotency_and_rebuild(postgres_engine: Engine) 
             destination.id: Money.of("0", RUB),
         }
     with Session(postgres_engine) as session:
-        assert session.scalar(select(func.count()).select_from(TransactionModel)) == 2
-        assert session.scalar(select(func.count()).select_from(AuditEventModel)) == 2
-        assert session.scalar(select(func.count()).select_from(IdempotencyRecordModel)) == 2
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(TransactionModel)
+                .where(TransactionModel.owner_id == owner_id)
+            )
+            == 2
+        )
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(AuditEventModel)
+                .where(AuditEventModel.owner_id == owner_id)
+            )
+            == 2
+        )
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(IdempotencyRecordModel)
+                .where(IdempotencyRecordModel.owner_id == owner_id)
+            )
+            == 2
+        )
 
         with pytest.raises(DBAPIError):
             session.execute(
