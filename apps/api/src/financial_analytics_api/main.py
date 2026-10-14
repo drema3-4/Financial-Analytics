@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from financial_analytics_api.analytics import router as analytics_router
 from financial_analytics_api.deposits import router as deposits_router
 from financial_analytics_api.errors import install_error_handlers
+from financial_analytics_api.forecast import router as forecast_router
 from financial_analytics_api.health import router as health_router
 from financial_analytics_api.identity import router as identity_router
 from financial_analytics_api.ledger import router as ledger_router
@@ -18,6 +19,7 @@ from financial_analytics_api.middleware import RequestContextMiddleware
 from financial_analytics_api.scheduling import router as scheduling_router
 from financial_analytics_app.analytics import AnalyticsService
 from financial_analytics_app.deposits import DepositService
+from financial_analytics_app.forecast import ForecastService
 from financial_analytics_app.identity import AuthService
 from financial_analytics_app.ledger import LedgerService
 from financial_analytics_app.scheduling import SchedulingService
@@ -43,6 +45,7 @@ def create_app(
     scheduling_service: SchedulingService | None = None,
     deposit_service: DepositService | None = None,
     analytics_service: AnalyticsService | None = None,
+    forecast_service: ForecastService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
     configure_logging(resolved_settings.log_level)
@@ -64,6 +67,7 @@ def create_app(
         or scheduling_service is None
         or deposit_service is None
         or analytics_service is None
+        or forecast_service is None
         or readiness_check is None
     ):
         database = Database(resolved_settings.database_url)
@@ -83,6 +87,10 @@ def create_app(
     if analytics_service is None:
         assert database is not None
         analytics_service = AnalyticsService(PostgresUnitOfWorkFactory(database.engine))
+
+    if forecast_service is None:
+        assert database is not None
+        forecast_service = ForecastService(PostgresUnitOfWorkFactory(database.engine))
 
     if readiness_check is None:
 
@@ -112,6 +120,7 @@ def create_app(
     app.state.scheduling_service = scheduling_service
     app.state.deposit_service = deposit_service
     app.state.analytics_service = analytics_service
+    app.state.forecast_service = forecast_service
     app.add_middleware(
         CORSMiddleware,
         allow_origins=resolved_settings.cors_origins,
@@ -135,6 +144,7 @@ def create_app(
     app.include_router(scheduling_router)
     app.include_router(deposits_router)
     app.include_router(analytics_router)
+    app.include_router(forecast_router)
     return app
 
 

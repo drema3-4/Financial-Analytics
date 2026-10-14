@@ -153,3 +153,39 @@ def test_openapi_documents_reconciled_analytics_contracts() -> None:
     assert {"value", "formula", "evidence"} <= set(money_metric["required"])
     category = schema["components"]["schemas"]["CategoryResponse"]
     assert "is_mandatory" in category["required"]
+
+
+def test_openapi_documents_forecast_scenarios_and_numeric_goal_plans() -> None:
+    schema = create_app(Settings(app_env=AppEnvironment.TEST, _env_file=None)).openapi()
+    paths = schema["paths"]
+    assert {
+        "/api/v1/forecast-scenarios",
+        "/api/v1/forecast-scenarios/{scenario_id}",
+        "/api/v1/forecasts",
+        "/api/v1/forecasts/compare",
+        "/api/v1/goals",
+        "/api/v1/goals/{goal_id}",
+    }.issubset(paths)
+    assert paths["/api/v1/forecasts"]["get"]["operationId"] == "getForecast"
+    assert paths["/api/v1/forecasts/compare"]["post"]["operationId"] == ("compareForecastScenarios")
+    schemas = schema["components"]["schemas"]
+    forecast = schemas["ForecastResponse"]["properties"]
+    assert {
+        "snapshot_id",
+        "algorithm_version",
+        "assumptions",
+        "timeline",
+        "uncertainty_low",
+        "uncertainty_high",
+        "warnings",
+    }.issubset(forecast)
+    goal = schemas["GoalPlanResponse"]["properties"]
+    assert {
+        "required_monthly_contribution",
+        "expected_completion_date",
+        "shortfall",
+        "contribution_gap",
+        "feasible_by_target",
+    }.issubset(goal)
+    rate = schemas["ScenarioInput"]["properties"]["annual_inflation"]
+    assert rate["$ref"].endswith("/RateInput")

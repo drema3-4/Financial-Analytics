@@ -267,3 +267,30 @@ median/MAD дают устойчивое и полностью объясним�
 performance budget задаётся формой plan/query count и объёмом прочитанных rows, а не хрупким
 wall-clock временем CI.
 
+## ADR-017: immutable forecast snapshot и явный priority waterfall
+
+**Дата:** 2026-10-14.
+
+**Решение:** прогноз строится чистой функцией `monthly-cashflow-v1` из immutable
+`ForecastInputSnapshot` и `forecast-assumptions-v1`. Snapshot фиксирует точный instant,
+account balances из postings до него, будущие recurring occurrences, плановые deposit
+interest entries и owner/account-scoped samples полных месяцев. Его ID — SHA-256
+канонического содержимого; результат не персистится как финансовый факт и не пишет ledger.
+
+Baseline нерегулярного расхода — account-level медиана максимум шести полных календарных
+месяцев, включая явные нули. Диапазон `historical-expense-min-max-v1` заменяет медиану
+наблюдаемым максимумом/минимумом расходов; это sensitivity range, не вероятностный interval.
+Каждая валюта прогнозируется отдельно без FX. User rate применяется к savings accounts, а
+deposit accounts продолжают использовать неизменяемый `deposit-interest-v1` schedule.
+
+Forecast scenarios и goals — owner-scoped mutable planning records с optimistic version и
+append-only audit events. Их изменение не создаёт postings. Несколько целей получают только
+явную стратегию `priority-waterfall-v1`: положительный monthly net cashflow распределяется по
+priority, target date и UUID. Required contribution, allocation, completion date и shortfall
+возвращаются числами.
+
+**Почему:** зафиксированный snapshot устраняет скрытую зависимость от clock/DB между повторными
+расчётами. Медиана и min/max легко сверяются вручную, а waterfall позволяет объяснить каждый
+выделенный рубль без непрозрачной оптимизации. Разделение planning records и ledger сохраняет
+фактическую историю неизменной.
+

@@ -1,6 +1,34 @@
 {
   "components": {
     "schemas": {
+      "AccountForecastResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "format": "uuid",
+            "title": "Account Id",
+            "type": "string"
+          },
+          "closing_balance": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "opening_balance": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          }
+        },
+        "required": [
+          "account_id",
+          "name",
+          "opening_balance",
+          "closing_balance"
+        ],
+        "title": "AccountForecastResponse",
+        "type": "object"
+      },
       "AccountResponse": {
         "additionalProperties": false,
         "properties": {
@@ -206,6 +234,38 @@
           "incomplete_buckets_evaluated"
         ],
         "title": "AnomalyPolicyResponse",
+        "type": "object"
+      },
+      "BaselineExpenseResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "format": "uuid",
+            "title": "Account Id",
+            "type": "string"
+          },
+          "monthly_median": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "observed_maximum": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "observed_minimum": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "sample_count": {
+            "title": "Sample Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "account_id",
+          "monthly_median",
+          "observed_minimum",
+          "observed_maximum",
+          "sample_count"
+        ],
+        "title": "BaselineExpenseResponse",
         "type": "object"
       },
       "BootstrapRequest": {
@@ -439,6 +499,38 @@
           "version"
         ],
         "title": "CategoryResponse",
+        "type": "object"
+      },
+      "CompareForecastsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_horizon": {
+            "format": "date",
+            "title": "Baseline Horizon",
+            "type": "string"
+          },
+          "currency": {
+            "pattern": "^[A-Z]{3}$",
+            "title": "Currency",
+            "type": "string"
+          },
+          "scenario_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Scenario Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "currency",
+          "baseline_horizon",
+          "scenario_ids"
+        ],
+        "title": "CompareForecastsRequest",
         "type": "object"
       },
       "ComparisonMetricResponse": {
@@ -1394,6 +1486,546 @@
         "title": "FinancialReportResponse",
         "type": "object"
       },
+      "ForecastAssumptionsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "annual_inflation": {
+            "title": "Annual Inflation",
+            "type": "string"
+          },
+          "annual_interest": {
+            "title": "Annual Interest",
+            "type": "string"
+          },
+          "expense_change": {
+            "title": "Expense Change",
+            "type": "string"
+          },
+          "horizon": {
+            "format": "date",
+            "title": "Horizon",
+            "type": "string"
+          },
+          "income_change": {
+            "title": "Income Change",
+            "type": "string"
+          },
+          "one_time_cashflows": {
+            "items": {
+              "$ref": "#/components/schemas/OneTimeCashflowResponse"
+            },
+            "title": "One Time Cashflows",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "horizon",
+          "income_change",
+          "expense_change",
+          "annual_inflation",
+          "annual_interest",
+          "one_time_cashflows"
+        ],
+        "title": "ForecastAssumptionsResponse",
+        "type": "object"
+      },
+      "ForecastComparisonItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "forecast": {
+            "$ref": "#/components/schemas/ForecastResponse"
+          },
+          "goal_plan": {
+            "$ref": "#/components/schemas/GoalPlanResultResponse"
+          },
+          "scenario_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario Id"
+          },
+          "scenario_name": {
+            "title": "Scenario Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scenario_id",
+          "scenario_name",
+          "forecast",
+          "goal_plan"
+        ],
+        "title": "ForecastComparisonItemResponse",
+        "type": "object"
+      },
+      "ForecastComparisonResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "disclaimer": {
+            "title": "Disclaimer",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ForecastComparisonItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "items",
+          "disclaimer"
+        ],
+        "title": "ForecastComparisonResponse",
+        "type": "object"
+      },
+      "ForecastMonthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/AccountForecastResponse"
+            },
+            "title": "Accounts",
+            "type": "array"
+          },
+          "closing_total": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "deposit_interest": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "ends_on": {
+            "format": "date",
+            "title": "Ends On",
+            "type": "string"
+          },
+          "irregular_expense": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "net_change": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "one_time_net": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "opening_total": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "savings_interest": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "scheduled_expense": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "scheduled_income": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "starts_on": {
+            "format": "date",
+            "title": "Starts On",
+            "type": "string"
+          },
+          "uncertainty_high": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "uncertainty_low": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          }
+        },
+        "required": [
+          "starts_on",
+          "ends_on",
+          "opening_total",
+          "scheduled_income",
+          "scheduled_expense",
+          "irregular_expense",
+          "deposit_interest",
+          "savings_interest",
+          "one_time_net",
+          "net_change",
+          "closing_total",
+          "uncertainty_low",
+          "uncertainty_high",
+          "accounts"
+        ],
+        "title": "ForecastMonthResponse",
+        "type": "object"
+      },
+      "ForecastResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/AccountForecastResponse"
+            },
+            "title": "Accounts",
+            "type": "array"
+          },
+          "algorithm_version": {
+            "title": "Algorithm Version",
+            "type": "string"
+          },
+          "assumptions": {
+            "$ref": "#/components/schemas/ForecastAssumptionsResponse"
+          },
+          "baseline_expenses": {
+            "items": {
+              "$ref": "#/components/schemas/BaselineExpenseResponse"
+            },
+            "title": "Baseline Expenses",
+            "type": "array"
+          },
+          "final_total": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "opening_total": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/ForecastMonthResponse"
+            },
+            "title": "Timeline",
+            "type": "array"
+          },
+          "uncertainty_explanation": {
+            "title": "Uncertainty Explanation",
+            "type": "string"
+          },
+          "uncertainty_high": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "uncertainty_low": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "uncertainty_method": {
+            "title": "Uncertainty Method",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "algorithm_version",
+          "assumptions",
+          "uncertainty_method",
+          "uncertainty_explanation",
+          "baseline_expenses",
+          "warnings",
+          "timeline",
+          "accounts",
+          "opening_total",
+          "final_total",
+          "uncertainty_low",
+          "uncertainty_high"
+        ],
+        "title": "ForecastResponse",
+        "type": "object"
+      },
+      "ForecastRunResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "disclaimer": {
+            "title": "Disclaimer",
+            "type": "string"
+          },
+          "forecast": {
+            "$ref": "#/components/schemas/ForecastResponse"
+          },
+          "goal_plan": {
+            "$ref": "#/components/schemas/GoalPlanResultResponse"
+          }
+        },
+        "required": [
+          "forecast",
+          "goal_plan",
+          "disclaimer"
+        ],
+        "title": "ForecastRunResponse",
+        "type": "object"
+      },
+      "GoalInput": {
+        "additionalProperties": false,
+        "properties": {
+          "linked_account_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Account Id"
+          },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "priority": {
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "saved_amount": {
+            "$ref": "#/components/schemas/MoneyInput"
+          },
+          "target": {
+            "$ref": "#/components/schemas/MoneyInput"
+          },
+          "target_date": {
+            "format": "date",
+            "title": "Target Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "target",
+          "target_date",
+          "saved_amount",
+          "priority"
+        ],
+        "title": "GoalInput",
+        "type": "object"
+      },
+      "GoalPlanResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "allocated_through_target": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "average_available_monthly": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "contribution_gap": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "expected_completion_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Completion Date"
+          },
+          "feasible_by_target": {
+            "title": "Feasible By Target",
+            "type": "boolean"
+          },
+          "goal_id": {
+            "format": "uuid",
+            "title": "Goal Id",
+            "type": "string"
+          },
+          "linked_account_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Account Id"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "integer"
+          },
+          "projected_saved_at_target": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "remaining_amount": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "required_monthly_contribution": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "saved_amount": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "shortfall": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "target_date": {
+            "format": "date",
+            "title": "Target Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "goal_id",
+          "name",
+          "priority",
+          "linked_account_id",
+          "target",
+          "target_date",
+          "saved_amount",
+          "remaining_amount",
+          "required_monthly_contribution",
+          "average_available_monthly",
+          "contribution_gap",
+          "allocated_through_target",
+          "projected_saved_at_target",
+          "expected_completion_date",
+          "shortfall",
+          "feasible_by_target",
+          "status"
+        ],
+        "title": "GoalPlanResponse",
+        "type": "object"
+      },
+      "GoalPlanResultResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "allocation_explanation": {
+            "title": "Allocation Explanation",
+            "type": "string"
+          },
+          "allocation_version": {
+            "title": "Allocation Version",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "forecast_snapshot_id": {
+            "title": "Forecast Snapshot Id",
+            "type": "string"
+          },
+          "goals": {
+            "items": {
+              "$ref": "#/components/schemas/GoalPlanResponse"
+            },
+            "title": "Goals",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "allocation_version",
+          "allocation_explanation",
+          "forecast_snapshot_id",
+          "currency",
+          "warnings",
+          "goals"
+        ],
+        "title": "GoalPlanResultResponse",
+        "type": "object"
+      },
+      "GoalResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "linked_account_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Account Id"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "integer"
+          },
+          "saved_amount": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "target": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "target_date": {
+            "format": "date",
+            "title": "Target Date",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "target",
+          "target_date",
+          "saved_amount",
+          "priority",
+          "linked_account_id",
+          "version"
+        ],
+        "title": "GoalResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1602,6 +2234,67 @@
           "currency"
         ],
         "title": "MoneyResponse",
+        "type": "object"
+      },
+      "OneTimeCashflowInput": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "format": "uuid",
+            "title": "Account Id",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          },
+          "money": {
+            "$ref": "#/components/schemas/MoneyInput"
+          },
+          "occurs_on": {
+            "format": "date",
+            "title": "Occurs On",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurs_on",
+          "account_id",
+          "money"
+        ],
+        "title": "OneTimeCashflowInput",
+        "type": "object"
+      },
+      "OneTimeCashflowResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "format": "uuid",
+            "title": "Account Id",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "money": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
+          "occurs_on": {
+            "format": "date",
+            "title": "Occurs On",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurs_on",
+          "account_id",
+          "money",
+          "description"
+        ],
+        "title": "OneTimeCashflowResponse",
         "type": "object"
       },
       "OperationRequest": {
@@ -2490,6 +3183,135 @@
         "title": "RuleVersionRequest",
         "type": "object"
       },
+      "ScenarioInput": {
+        "additionalProperties": false,
+        "properties": {
+          "annual_inflation": {
+            "$ref": "#/components/schemas/RateInput",
+            "default": {
+              "value": "0"
+            }
+          },
+          "annual_interest": {
+            "$ref": "#/components/schemas/RateInput",
+            "default": {
+              "value": "0"
+            }
+          },
+          "currency": {
+            "pattern": "^[A-Z]{3}$",
+            "title": "Currency",
+            "type": "string"
+          },
+          "expense_change": {
+            "$ref": "#/components/schemas/RateInput",
+            "default": {
+              "value": "0"
+            }
+          },
+          "horizon": {
+            "format": "date",
+            "title": "Horizon",
+            "type": "string"
+          },
+          "income_change": {
+            "$ref": "#/components/schemas/RateInput",
+            "default": {
+              "value": "0"
+            }
+          },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "one_time_cashflows": {
+            "items": {
+              "$ref": "#/components/schemas/OneTimeCashflowInput"
+            },
+            "maxItems": 100,
+            "title": "One Time Cashflows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "currency",
+          "horizon"
+        ],
+        "title": "ScenarioInput",
+        "type": "object"
+      },
+      "ScenarioResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "annual_inflation": {
+            "title": "Annual Inflation",
+            "type": "string"
+          },
+          "annual_interest": {
+            "title": "Annual Interest",
+            "type": "string"
+          },
+          "assumptions_version": {
+            "title": "Assumptions Version",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "expense_change": {
+            "title": "Expense Change",
+            "type": "string"
+          },
+          "horizon": {
+            "format": "date",
+            "title": "Horizon",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "income_change": {
+            "title": "Income Change",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "one_time_cashflows": {
+            "items": {
+              "$ref": "#/components/schemas/OneTimeCashflowResponse"
+            },
+            "title": "One Time Cashflows",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "currency",
+          "horizon",
+          "income_change",
+          "expense_change",
+          "annual_inflation",
+          "annual_interest",
+          "one_time_cashflows",
+          "assumptions_version",
+          "version"
+        ],
+        "title": "ScenarioResponse",
+        "type": "object"
+      },
       "TagResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2760,6 +3582,61 @@
         "title": "UpdateAccountRequest",
         "type": "object"
       },
+      "UpdateGoalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "linked_account_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Account Id"
+          },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "priority": {
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "saved_amount": {
+            "$ref": "#/components/schemas/MoneyInput"
+          },
+          "target": {
+            "$ref": "#/components/schemas/MoneyInput"
+          },
+          "target_date": {
+            "format": "date",
+            "title": "Target Date",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "target",
+          "target_date",
+          "saved_amount",
+          "priority",
+          "version"
+        ],
+        "title": "UpdateGoalRequest",
+        "type": "object"
+      },
       "UpdateRecurringRuleRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2820,6 +3697,72 @@
           "version"
         ],
         "title": "UpdateRecurringRuleRequest",
+        "type": "object"
+      },
+      "UpdateScenarioRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "annual_inflation": {
+            "$ref": "#/components/schemas/RateInput",
+            "default": {
+              "value": "0"
+            }
+          },
+          "annual_interest": {
+            "$ref": "#/components/schemas/RateInput",
+            "default": {
+              "value": "0"
+            }
+          },
+          "currency": {
+            "pattern": "^[A-Z]{3}$",
+            "title": "Currency",
+            "type": "string"
+          },
+          "expense_change": {
+            "$ref": "#/components/schemas/RateInput",
+            "default": {
+              "value": "0"
+            }
+          },
+          "horizon": {
+            "format": "date",
+            "title": "Horizon",
+            "type": "string"
+          },
+          "income_change": {
+            "$ref": "#/components/schemas/RateInput",
+            "default": {
+              "value": "0"
+            }
+          },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "one_time_cashflows": {
+            "items": {
+              "$ref": "#/components/schemas/OneTimeCashflowInput"
+            },
+            "maxItems": 100,
+            "title": "One Time Cashflows",
+            "type": "array"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "currency",
+          "horizon",
+          "version"
+        ],
+        "title": "UpdateScenarioRequest",
         "type": "object"
       },
       "ValidationError": {
@@ -4871,6 +5814,962 @@
         "summary": "Get Deposit Valuation",
         "tags": [
           "deposits"
+        ]
+      }
+    },
+    "/api/v1/forecast-scenarios": {
+      "get": {
+        "operationId": "listForecastScenarios",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ScenarioResponse"
+                  },
+                  "title": "Response Listforecastscenarios",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "summary": "List Scenarios",
+        "tags": [
+          "forecast"
+        ]
+      },
+      "post": {
+        "operationId": "createForecastScenario",
+        "parameters": [
+          {
+            "description": "Caller-generated key unique to one logical create or reversal command.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Caller-generated key unique to one logical create or reversal command.",
+              "examples": [
+                "account-20261013-001"
+              ],
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[\\x21-\\x7E]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Create Scenario",
+        "tags": [
+          "forecast"
+        ]
+      }
+    },
+    "/api/v1/forecast-scenarios/{scenario_id}": {
+      "get": {
+        "operationId": "getForecastScenario",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scenario_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Scenario Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Scenario",
+        "tags": [
+          "forecast"
+        ]
+      },
+      "put": {
+        "operationId": "updateForecastScenario",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scenario_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Scenario Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateScenarioRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Update Scenario",
+        "tags": [
+          "forecast"
+        ]
+      }
+    },
+    "/api/v1/forecasts": {
+      "get": {
+        "operationId": "getForecast",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "currency",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Z]{3}$",
+              "title": "Currency",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "through",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Through"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scenario_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scenario Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForecastRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Get Forecast",
+        "tags": [
+          "forecast"
+        ]
+      }
+    },
+    "/api/v1/forecasts/compare": {
+      "post": {
+        "operationId": "compareForecastScenarios",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompareForecastsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForecastComparisonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Compare Forecasts",
+        "tags": [
+          "forecast"
+        ]
+      }
+    },
+    "/api/v1/goals": {
+      "get": {
+        "operationId": "listFinancialGoals",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GoalResponse"
+                  },
+                  "title": "Response Listfinancialgoals",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "summary": "List Goals",
+        "tags": [
+          "forecast"
+        ]
+      },
+      "post": {
+        "operationId": "createFinancialGoal",
+        "parameters": [
+          {
+            "description": "Caller-generated key unique to one logical create or reversal command.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Caller-generated key unique to one logical create or reversal command.",
+              "examples": [
+                "account-20261013-001"
+              ],
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[\\x21-\\x7E]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoalInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Create Goal",
+        "tags": [
+          "forecast"
+        ]
+      }
+    },
+    "/api/v1/goals/{goal_id}": {
+      "get": {
+        "operationId": "getFinancialGoal",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Goal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Goal",
+        "tags": [
+          "forecast"
+        ]
+      },
+      "put": {
+        "operationId": "updateFinancialGoal",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Goal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGoalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Update Goal",
+        "tags": [
+          "forecast"
         ]
       }
     },

@@ -1,4 +1,4 @@
-# API contract through milestone 07
+# API contract through milestone 08
 
 FastAPI публикует актуальную OpenAPI-схему по `/openapi.json` и интерактивную документацию
 по `/docs`. Зафиксированный snapshot находится в `docs/openapi.json`; из него
@@ -138,6 +138,34 @@ reversal/новой posting, поэтому reconciliation меняется, н�
 скрытой суммы разных валют. Каждый metric имеет formula/evidence; detailed breakdown содержит
 `flow_type`, поэтому его строки сверяются с income/expense отдельно. Точные формулы, reversal,
 open-period comparison и anomaly thresholds описаны в [ANALYTICS.md](ANALYTICS.md).
+
+## Forecast scenarios and goals
+
+Все planning records owner-scoped. Create требует access cookie, CSRF и `Idempotency-Key`;
+update требует access cookie, CSRF и optimistic `version`. Чужой UUID неотличим от
+отсутствующего (`404`). Ни один путь прогноза не создаёт ledger transaction/posting.
+
+| Method | Path | Result |
+|---|---|---|
+| `POST`, `GET` | `/forecast-scenarios` | создать/list versioned scenario assumptions |
+| `GET`, `PUT` | `/forecast-scenarios/{id}` | получить/полностью обновить scenario |
+| `POST`, `GET` | `/goals` | создать/list numeric financial goals |
+| `GET`, `PUT` | `/goals/{id}` | получить/полностью обновить goal |
+| `GET` | `/forecasts?currency=...&through=...` | baseline forecast и планы целей |
+| `GET` | `/forecasts?currency=...&scenario_id=...` | forecast по сохранённому scenario horizon |
+| `POST` | `/forecasts/compare` | baseline и до 20 scenarios из одного snapshot |
+
+Scenario задаёт decimal-string rates в объектах `RateInput`, horizon и до 100 one-time
+cashflows. One-time account обязан принадлежать owner и иметь валюту scenario. Goal содержит
+target/saved `Money`, target date, priority и optional linked account той же owner/currency.
+
+Forecast возвращает `snapshot_id`, версии algorithm/assumptions, account totals, monthly
+timeline, baseline samples, warnings и lower/upper sensitivity range с именем и объяснением
+метода. В том же ответе goal plan содержит required monthly contribution, average available,
+contribution gap, allocated amount, expected completion date и shortfall. Все money/rate
+values остаются decimal strings. Формулы и ограничения описаны в
+[FORECASTS_AND_GOALS.md](FORECASTS_AND_GOALS.md); ответ содержит явный disclaimer, что прогноз
+не является гарантией.
 
 ### Пример account с opening balance
 

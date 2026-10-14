@@ -782,6 +782,95 @@ class OutboxJobModel(Base):
     )
 
 
+class ForecastScenarioModel(Base):
+    __tablename__ = "forecast_scenarios"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id", name="uq_forecast_scenarios_owner_id_id"),
+        CheckConstraint("char_length(btrim(name)) > 0", name="forecast_scenario_name"),
+        CheckConstraint("currency ~ '^[A-Z]{3}$'", name="forecast_scenario_currency"),
+        CheckConstraint("income_change >= -1", name="forecast_scenario_income_change"),
+        CheckConstraint("expense_change >= -1", name="forecast_scenario_expense_change"),
+        CheckConstraint("annual_inflation >= 0", name="forecast_scenario_inflation"),
+        CheckConstraint("annual_interest >= 0", name="forecast_scenario_interest"),
+        CheckConstraint(
+            "assumptions_version = 'forecast-assumptions-v1'",
+            name="forecast_scenario_assumptions_version",
+        ),
+        CheckConstraint("version > 0", name="forecast_scenario_version"),
+        Index("ix_forecast_scenarios_owner_id_currency", "owner_id", "currency"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    horizon: Mapped[date] = mapped_column(Date, nullable=False)
+    income_change: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    expense_change: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    annual_inflation: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    annual_interest: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    one_time_cashflows: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    assumptions_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    __mapper_args__ = {"version_id_col": version}
+
+
+class FinancialGoalModel(Base):
+    __tablename__ = "financial_goals"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id", name="uq_financial_goals_owner_id_id"),
+        ForeignKeyConstraint(
+            ["owner_id", "linked_account_id", "currency"],
+            ["accounts.owner_id", "accounts.id", "accounts.currency"],
+            name="fk_financial_goals_owner_linked_account_currency_accounts",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("char_length(btrim(name)) > 0", name="financial_goal_name"),
+        CheckConstraint("currency ~ '^[A-Z]{3}$'", name="financial_goal_currency"),
+        CheckConstraint("target_amount > 0", name="financial_goal_target"),
+        CheckConstraint("saved_amount >= 0", name="financial_goal_saved"),
+        CheckConstraint("priority > 0", name="financial_goal_priority"),
+        CheckConstraint("version > 0", name="financial_goal_version"),
+        Index("ix_financial_goals_owner_id_priority", "owner_id", "priority", "target_date"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    target_amount: Mapped[Decimal] = mapped_column(
+        Numeric(MONEY_PRECISION, MONEY_SCALE), nullable=False
+    )
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    saved_amount: Mapped[Decimal] = mapped_column(
+        Numeric(MONEY_PRECISION, MONEY_SCALE), nullable=False
+    )
+    priority: Mapped[int] = mapped_column(Integer, nullable=False)
+    linked_account_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    __mapper_args__ = {"version_id_col": version}
+
+
 class SchemaMetadataModel(Base):
     __tablename__ = "schema_metadata"
 

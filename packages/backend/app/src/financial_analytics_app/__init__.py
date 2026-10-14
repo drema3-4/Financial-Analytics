@@ -6,6 +6,11 @@ from financial_analytics_app.deposits import (
     DepositValuation,
     InterestReconciliation,
 )
+from financial_analytics_app.forecast import (
+    ForecastComparison,
+    ForecastComparisonItem,
+    ForecastService,
+)
 from financial_analytics_app.ledger import (
     AccountWithBalance,
     LedgerService,
@@ -16,6 +21,7 @@ from financial_analytics_app.ledger import (
 from financial_analytics_app.ports import (
     AuditEvent,
     DepositRepository,
+    ForecastRepository,
     IdempotencyRecord,
     LedgerRepository,
     SchedulingRepository,
@@ -43,6 +49,10 @@ __all__ = [
     "DepositRepository",
     "DepositService",
     "DepositValuation",
+    "ForecastComparison",
+    "ForecastComparisonItem",
+    "ForecastRepository",
+    "ForecastService",
     "IdempotencyConflictError",
     "IdempotencyRecord",
     "InterestReconciliation",

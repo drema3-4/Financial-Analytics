@@ -39,6 +39,8 @@ def test_clean_upgrade_and_empty_schema_downgrade() -> None:
             "outbox_jobs",
             "deposit_terms",
             "deposit_rate_periods",
+            "forecast_scenarios",
+            "financial_goals",
         }.issubset(inspect(engine).get_table_names())
         assert "is_mandatory" in {
             column["name"] for column in inspect(engine).get_columns("categories")

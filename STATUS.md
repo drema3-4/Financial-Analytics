@@ -1,18 +1,52 @@
 # Статус проекта
 
-Обновлено: 2026-10-13
+Обновлено: 2026-10-14
 
 ## Текущее состояние
 
-- Стадия: завершён `07 — Analytics`; reconciliation, query-plan и PostgreSQL gates зелёные.
-- Реализация: owner-scoped read model строит explainable cash flow, income/expense,
-  category/group breakdown, net worth, mandatory share, savings rate, period comparison и
-  deterministic anomalies; dashboard/report API доступны под `/api/v1`, revision
-  `20261013_0009` применена.
-- Следующий этап: `08 — Forecast & Goals`; не начат и требует отдельного явного запроса.
+- Стадия: завершён `08 — Forecast & Goals`; deterministic replay, goal-planning и PostgreSQL
+  gates зелёные.
+- Реализация: immutable snapshot и versioned assumptions питают чистый monthly timeline;
+  baseline объединяет balances, recurrence, deposit schedules и оценку нерегулярных расходов,
+  а owner-scoped scenarios/goals доступны под `/api/v1`, revision `20261014_0010` применена.
+- Следующий этап: `09 — LLM Advice`; не начат и требует отдельного явного запроса.
 - Host global toolchain из снимка этапа 00 всё ещё может отличаться от baseline; repository
   gate подтверждён в Python 3.12.12 environment, pnpm 12.12.1 и закреплённых containers.
 - LLM не входит в core startup; local-vLLM остаётся задачей этапа 09.
+
+## Готово в этапе 08
+
+- `ForecastInputSnapshot` неизменяем и имеет canonical SHA-256 fingerprint. Одинаковые snapshot,
+  scenario и algorithm/assumptions versions дают байт-в-байт одинаковый доменный результат.
+- Чистый `monthly-cashflow-v1` строит ряд до произвольной даты из текущих остатков, будущих
+  recurring occurrences, deposit schedules и median baseline по шести последним полным
+  историческим месяцам. Все money/rate операции используют `Decimal` и half-even rounding.
+- User scenarios изменяют income/expense, inflation, annual interest, one-time cashflows и
+  horizon только в forecast input. Создание, изменение и сравнение сценариев не пишет postings
+  и не меняет историю или соседние scenarios.
+- Каждый прогноз возвращает monthly account/capital totals, effective assumptions, warnings и
+  объяснимый min/max range `historical-expense-min-max-v1`; недостаточная полная история явно
+  помечается, а не маскируется искусственным confidence score.
+- Goals содержат target/date, saved amount, priority, linked account, required monthly
+  contribution, expected completion date, shortfall и contribution gap. Несколько целей
+  получают средства по явному waterfall `priority`, затем `target_date`, затем UUID.
+- Owner-scoped CRUD для `/forecast-scenarios` и `/goals`, одиночный `/forecasts` и
+  `/forecasts/compare` закреплены в OpenAPI и generated TypeScript client. Мутации сценариев и
+  целей имеют optimistic version, idempotency и audit trail; cross-owner IDs возвращают `404`.
+- ADR-017 и `docs/FORECASTS_AND_GOALS.md` фиксируют формулы, порядок применения cashflow,
+  uncertainty/goal allocation и ограничения: результат является модельным прогнозом, а не
+  финансовой гарантией.
+
+## Проверки этапа 08
+
+- Backend: Ruff lint/format, strict mypy, generated OpenAPI/client drift и Poetry lock — зелёные;
+  `93 passed`, total coverage `86.74%`.
+- Golden/property coverage включает zero activity, only recurrence, deposit maturity, missed
+  target, already achieved, impossible contribution, inflation и same-snapshot reproducibility.
+- PostgreSQL: clean upgrade/check/downgrade и metadata drift зелёные; scenario isolation,
+  owner-scoped access, compare на одном snapshot, audit events и отсутствие ledger mutations
+  подтверждены integration-тестом.
+- Frontend: ESLint, Prettier, TypeScript и production build зелёные; `8 passed`, coverage `100%`.
 
 ## Готово в этапе 07
 
@@ -149,3 +183,4 @@
 | 05 Scheduling | завершён | `feat(05): process recurring operations reliably` | 68 backend tests, 86.80%, worker concurrency/replay, 8 frontend tests, Compose |
 | 06 Deposits | завершён | `feat(06): model deposits and compound interest` | 75 backend tests, 86.61%, fixtures/property/integration/contract, 8 frontend tests, Compose |
 | 07 Analytics | завершён | `feat(07): provide reconciled financial analytics` | 82 backend tests, 87.37%, reconciliation/plan/integration/contract, 8 frontend tests, Compose |
+| 08 Forecast & Goals | завершён | `feat(08): forecast finances and plan goals` | 93 backend tests, 86.74%, golden/property/integration/contract, 8 frontend tests |

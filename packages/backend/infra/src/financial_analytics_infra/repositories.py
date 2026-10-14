@@ -16,6 +16,7 @@ from financial_analytics_app.ports import (
     AuditEvent,
     AuditRepository,
     DepositRepository,
+    ForecastRepository,
     IdempotencyRecord,
     IdempotencyRepository,
     LedgerRepository,
@@ -28,6 +29,7 @@ from financial_analytics_domain import (
     Account,
     AccountKind,
     CapitalizationFrequency,
+    CatchUpPolicy,
     Category,
     CategoryGroup,
     CategoryKind,
@@ -37,11 +39,20 @@ from financial_analytics_domain import (
     DepositTerms,
     EarlyClosePolicy,
     EarlyCloseRule,
+    FinancialGoal,
+    ForecastAssumptions,
+    ForecastScenario,
     Instant,
     InterestRoundingFrequency,
+    MissingDayPolicy,
     Money,
+    OneTimeCashflow,
     Posting,
     Rate,
+    RecurrenceFrequency,
+    RecurringOperation,
+    RecurringRule,
+    RecurringRuleStatus,
     RoundingPolicy,
     Tag,
     Transaction,
@@ -55,8 +66,11 @@ from financial_analytics_infra.models import (
     CategoryModel,
     DepositRatePeriodModel,
     DepositTermsModel,
+    FinancialGoalModel,
+    ForecastScenarioModel,
     IdempotencyRecordModel,
     PostingModel,
+    RecurringRuleModel,
     TagModel,
     TransactionModel,
     TransactionTagModel,
@@ -763,11 +777,152 @@ class PostgresDepositRepository:
         return tuple(terms for deposit_id in ids if (terms := self.get(deposit_id)) is not None)
 
 
+class PostgresForecastRepository:
+    def __init__(self, session: Session, owner_id: UUID) -> None:
+        self._session = session
+        self._owner_id = owner_id
+
+    def add_scenario(self, scenario: ForecastScenario) -> None:
+        self._require_owner(scenario.owner_id)
+        self._session.add(
+            ForecastScenarioModel(
+                id=scenario.id,
+                owner_id=scenario.owner_id,
+                name=scenario.name,
+                currency=scenario.currency.code,
+                horizon=scenario.assumptions.horizon,
+                income_change=scenario.assumptions.income_change.value,
+                expense_change=scenario.assumptions.expense_change.value,
+                annual_inflation=scenario.assumptions.annual_inflation.value,
+                annual_interest=scenario.assumptions.annual_interest.value,
+                one_time_cashflows=_one_time_payload(scenario),
+                assumptions_version=scenario.assumptions.version,
+                version=scenario.version,
+            )
+        )
+
+    def get_scenario(self, scenario_id: UUID) -> ForecastScenario | None:
+        row = self._session.scalar(
+            select(ForecastScenarioModel).where(
+                ForecastScenarioModel.owner_id == self._owner_id,
+                ForecastScenarioModel.id == scenario_id,
+            )
+        )
+        return None if row is None else _scenario_from_row(row)
+
+    def list_scenarios(self) -> tuple[ForecastScenario, ...]:
+        rows = self._session.scalars(
+            select(ForecastScenarioModel)
+            .where(ForecastScenarioModel.owner_id == self._owner_id)
+            .order_by(ForecastScenarioModel.created_at, ForecastScenarioModel.id)
+        )
+        return tuple(_scenario_from_row(row) for row in rows)
+
+    def save_scenario(
+        self, scenario: ForecastScenario, *, expected_version: int
+    ) -> ForecastScenario:
+        self._require_owner(scenario.owner_id)
+        row = self._session.scalar(
+            select(ForecastScenarioModel)
+            .where(
+                ForecastScenarioModel.owner_id == self._owner_id,
+                ForecastScenarioModel.id == scenario.id,
+            )
+            .with_for_update()
+        )
+        if row is None or row.version != expected_version:
+            raise ConcurrentModificationError("forecast scenario version is stale")
+        row.name = scenario.name
+        row.currency = scenario.currency.code
+        row.horizon = scenario.assumptions.horizon
+        row.income_change = scenario.assumptions.income_change.value
+        row.expense_change = scenario.assumptions.expense_change.value
+        row.annual_inflation = scenario.assumptions.annual_inflation.value
+        row.annual_interest = scenario.assumptions.annual_interest.value
+        row.one_time_cashflows = _one_time_payload(scenario)
+        row.assumptions_version = scenario.assumptions.version
+        self._session.flush()
+        return _scenario_from_row(row)
+
+    def add_goal(self, goal: FinancialGoal) -> None:
+        self._require_owner(goal.owner_id)
+        self._session.add(
+            FinancialGoalModel(
+                id=goal.id,
+                owner_id=goal.owner_id,
+                name=goal.name,
+                currency=goal.target.currency.code,
+                target_amount=goal.target.amount,
+                target_date=goal.target_date,
+                saved_amount=goal.saved_amount.amount,
+                priority=goal.priority,
+                linked_account_id=goal.linked_account_id,
+                version=goal.version,
+            )
+        )
+
+    def get_goal(self, goal_id: UUID) -> FinancialGoal | None:
+        row = self._session.scalar(
+            select(FinancialGoalModel).where(
+                FinancialGoalModel.owner_id == self._owner_id,
+                FinancialGoalModel.id == goal_id,
+            )
+        )
+        return None if row is None else _goal_from_row(row)
+
+    def list_goals(self) -> tuple[FinancialGoal, ...]:
+        rows = self._session.scalars(
+            select(FinancialGoalModel)
+            .where(FinancialGoalModel.owner_id == self._owner_id)
+            .order_by(
+                FinancialGoalModel.priority,
+                FinancialGoalModel.target_date,
+                FinancialGoalModel.id,
+            )
+        )
+        return tuple(_goal_from_row(row) for row in rows)
+
+    def save_goal(self, goal: FinancialGoal, *, expected_version: int) -> FinancialGoal:
+        self._require_owner(goal.owner_id)
+        row = self._session.scalar(
+            select(FinancialGoalModel)
+            .where(
+                FinancialGoalModel.owner_id == self._owner_id,
+                FinancialGoalModel.id == goal.id,
+            )
+            .with_for_update()
+        )
+        if row is None or row.version != expected_version:
+            raise ConcurrentModificationError("financial goal version is stale")
+        row.name = goal.name
+        row.currency = goal.target.currency.code
+        row.target_amount = goal.target.amount
+        row.target_date = goal.target_date
+        row.saved_amount = goal.saved_amount.amount
+        row.priority = goal.priority
+        row.linked_account_id = goal.linked_account_id
+        self._session.flush()
+        return _goal_from_row(row)
+
+    def list_recurring_rules(self) -> tuple[RecurringRule, ...]:
+        rows = self._session.scalars(
+            select(RecurringRuleModel)
+            .where(RecurringRuleModel.owner_id == self._owner_id)
+            .order_by(RecurringRuleModel.created_at, RecurringRuleModel.id)
+        )
+        return tuple(_recurring_rule_from_row(row) for row in rows)
+
+    def _require_owner(self, owner_id: UUID) -> None:
+        if owner_id != self._owner_id:
+            raise OwnershipError("forecast repository scope does not match entity owner")
+
+
 class PostgresUnitOfWork:
     ledger: LedgerRepository
     audit: AuditRepository
     idempotency: IdempotencyRepository
     deposits: DepositRepository
+    forecasts: ForecastRepository
 
     def __init__(self, session_factory: sessionmaker[Session], owner_id: UUID) -> None:
         self._session = session_factory()
@@ -776,6 +931,7 @@ class PostgresUnitOfWork:
         self.audit = PostgresAuditRepository(self._session, owner_id)
         self.idempotency = PostgresIdempotencyRepository(self._session, owner_id)
         self.deposits = PostgresDepositRepository(self._session, owner_id)
+        self.forecasts = PostgresForecastRepository(self._session, owner_id)
 
     def __enter__(self) -> PostgresUnitOfWork:
         return self
@@ -912,4 +1068,87 @@ def _deposit_from_rows(
         ),
         tax_rate=Rate.of(row.tax_rate),
         algorithm_version=row.algorithm_version,
+    )
+
+
+def _one_time_payload(scenario: ForecastScenario) -> list[dict[str, object]]:
+    return [
+        {
+            "occurs_on": item.occurs_on.isoformat(),
+            "account_id": str(item.account_id),
+            "amount": format(item.amount.amount, "f"),
+            "description": item.description,
+        }
+        for item in scenario.assumptions.one_time_cashflows
+    ]
+
+
+def _scenario_from_row(row: ForecastScenarioModel) -> ForecastScenario:
+    currency = Currency(row.currency)
+    return ForecastScenario(
+        id=row.id,
+        owner_id=row.owner_id,
+        name=row.name,
+        currency=currency,
+        assumptions=ForecastAssumptions(
+            horizon=row.horizon,
+            income_change=Rate.of(row.income_change),
+            expense_change=Rate.of(row.expense_change),
+            annual_inflation=Rate.of(row.annual_inflation),
+            annual_interest=Rate.of(row.annual_interest),
+            one_time_cashflows=tuple(
+                OneTimeCashflow(
+                    occurs_on=datetime.fromisoformat(str(item["occurs_on"])).date(),
+                    account_id=UUID(str(item["account_id"])),
+                    amount=Money.of(str(item["amount"]), currency),
+                    description=str(item.get("description", "")),
+                )
+                for item in row.one_time_cashflows
+            ),
+            version=row.assumptions_version,
+        ),
+        version=row.version,
+    )
+
+
+def _goal_from_row(row: FinancialGoalModel) -> FinancialGoal:
+    currency = Currency(row.currency)
+    return FinancialGoal(
+        id=row.id,
+        owner_id=row.owner_id,
+        name=row.name,
+        target=Money.of(row.target_amount, currency),
+        target_date=row.target_date,
+        saved_amount=Money.of(row.saved_amount, currency),
+        priority=row.priority,
+        linked_account_id=row.linked_account_id,
+        version=row.version,
+    )
+
+
+def _recurring_rule_from_row(row: RecurringRuleModel) -> RecurringRule:
+    return RecurringRule(
+        id=row.id,
+        owner_id=row.owner_id,
+        operation=RecurringOperation(
+            kind=TransactionKind(row.kind),
+            account_id=row.account_id,
+            destination_account_id=row.destination_account_id,
+            category_id=row.category_id,
+            amount=Money.of(row.amount, Currency(row.currency)),
+            description=row.description,
+            tag_ids=tuple(UUID(value) for value in row.tag_ids),
+        ),
+        frequency=RecurrenceFrequency(row.frequency),
+        starts_on=row.starts_on,
+        local_time=row.local_time,
+        timezone=row.timezone,
+        missing_day_policy=MissingDayPolicy(row.missing_day_policy),
+        catch_up_policy=CatchUpPolicy(row.catch_up_policy),
+        end_date=row.end_date,
+        next_occurrence_at=(
+            None if row.next_occurrence_at is None else Instant(row.next_occurrence_at)
+        ),
+        status=RecurringRuleStatus(row.status),
+        version=row.version,
     )

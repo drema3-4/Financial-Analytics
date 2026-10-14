@@ -13,6 +13,8 @@ from financial_analytics_domain import (
     CategoryGroup,
     Currency,
     DepositTerms,
+    FinancialGoal,
+    ForecastScenario,
     Instant,
     Money,
     OutboxJob,
@@ -150,11 +152,34 @@ class DepositRepository(Protocol):
     def list(self) -> tuple[DepositTerms, ...]: ...
 
 
+class ForecastRepository(Protocol):
+    def add_scenario(self, scenario: ForecastScenario) -> None: ...
+
+    def get_scenario(self, scenario_id: UUID) -> ForecastScenario | None: ...
+
+    def list_scenarios(self) -> tuple[ForecastScenario, ...]: ...
+
+    def save_scenario(
+        self, scenario: ForecastScenario, *, expected_version: int
+    ) -> ForecastScenario: ...
+
+    def add_goal(self, goal: FinancialGoal) -> None: ...
+
+    def get_goal(self, goal_id: UUID) -> FinancialGoal | None: ...
+
+    def list_goals(self) -> tuple[FinancialGoal, ...]: ...
+
+    def save_goal(self, goal: FinancialGoal, *, expected_version: int) -> FinancialGoal: ...
+
+    def list_recurring_rules(self) -> tuple[RecurringRule, ...]: ...
+
+
 class UnitOfWork(Protocol):
     ledger: LedgerRepository
     audit: AuditRepository
     idempotency: IdempotencyRepository
     deposits: DepositRepository
+    forecasts: ForecastRepository
 
     def __enter__(self) -> Self: ...
 

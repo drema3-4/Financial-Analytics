@@ -1,8 +1,9 @@
 # Financial Analytics
 
-Local-first приложение для учёта личных финансов. Этап 05 даёт idempotent ledger API для
+Local-first приложение для учёта личных финансов. Этапы 05–08 дают idempotent ledger API для
 accounts, categories, income/expense/transfer/adjustment/reversal, stable cursor pagination,
-UTF-8 CSV export, recurring rules и PostgreSQL outbox worker с lease/backoff/dead-letter.
+UTF-8 CSV export, recurring rules, deposits, reconciled analytics, детерминированные forecasts,
+versioned scenarios и numeric goal plans с явным priority waterfall.
 Generated TypeScript client построен поверх double-entry domain core. Identity
 использует одноразовый master bootstrap, Argon2id и ротируемые cookie sessions с CSRF/CORS.
 
@@ -175,7 +176,8 @@ pnpm --filter @financial-analytics/web exec vite --host 127.0.0.1
 docker compose config --quiet
 ```
 
-Revisions `20261013_0004`–`0008` добавляют Ledger API, recurring rules/outbox и deposits. CI проверяет
+Revisions `20261013_0004`–`20261014_0010` добавляют Ledger API, recurring rules/outbox,
+deposits, analytics и planning records. CI проверяет
 upgrade на чистой PostgreSQL database, отсутствие drift между SQLAlchemy metadata и Alembic,
 integration tests и downgrade до пустого bootstrap revision. Полная схема и правила — в
 [docs/DATA_MODEL.md](docs/DATA_MODEL.md), а мониторинг/retry worker — в

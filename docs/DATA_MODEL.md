@@ -1,6 +1,6 @@
 # Модель данных
 
-Этапы 02–07 реализуют double-entry ledger как единственный источник фактических остатков.
+Этапы 02–08 реализуют double-entry ledger как единственный источник фактических остатков.
 Проведённая операция неизменяема; исправление — новая reversal transaction с причинными
 ссылками. В таблицах нет доверенного «UI balance»: любой остаток перестраивается суммой
 `postings.amount`.
@@ -19,6 +19,8 @@ erDiagram
     USERS ||--o{ RECURRING_RULES : owns
     USERS ||--o{ OUTBOX_JOBS : owns
     USERS ||--o{ DEPOSIT_TERMS : owns
+    USERS ||--o{ FORECAST_SCENARIOS : owns
+    USERS ||--o{ FINANCIAL_GOALS : owns
     CATEGORY_GROUPS o|--o{ CATEGORY_GROUPS : parent
     CATEGORY_GROUPS o|--o{ CATEGORIES : groups
     CATEGORIES o|--o{ TRANSACTIONS : classifies
@@ -33,6 +35,7 @@ erDiagram
     ACCOUNTS ||--o{ DEPOSIT_TERMS : principal
     DEPOSIT_TERMS ||--|{ DEPOSIT_RATE_PERIODS : rates
     DEPOSIT_TERMS o|--o{ TRANSACTIONS : links
+    ACCOUNTS o|--o{ FINANCIAL_GOALS : links
 
     USERS {
         uuid id PK
@@ -135,6 +138,32 @@ erDiagram
         date ends_on
         numeric_20_12 nominal_rate
     }
+    FORECAST_SCENARIOS {
+        uuid id PK
+        uuid owner_id FK
+        varchar name
+        char3 currency
+        date horizon
+        numeric_20_12 income_change
+        numeric_20_12 expense_change
+        numeric_20_12 annual_inflation
+        numeric_20_12 annual_interest
+        jsonb one_time_cashflows
+        varchar assumptions_version
+        integer version
+    }
+    FINANCIAL_GOALS {
+        uuid id PK
+        uuid owner_id FK
+        uuid linked_account_id FK
+        varchar name
+        char3 currency
+        numeric_38_9 target_amount
+        date target_date
+        numeric_38_9 saved_amount
+        integer priority
+        integer version
+    }
 ```
 
 Этап 03 расширяет `users` состоянием `active/disabled` и единственным `is_master`, а также
@@ -157,6 +186,13 @@ Deposits включает immutable `deposit_terms` и `deposit_rate_periods`. �
 дублируется в таблице: он воспроизводимо строится из versioned terms и deposit-linked transfer
 transactions. Фактические проценты — ledger transaction kind `interest`; `deposit_id` также
 переносится в reversal.
+
+Planning включает `forecast_scenarios` и `financial_goals`. Оба набора строк owner-scoped,
+имеют optimistic `version`, а create/update сопровождаются append-only `audit_events`.
+Scenario one-time account links хранятся в JSON snapshot assumptions и проверяются application
+service перед записью; goal linked account дополнительно защищён составным owner/account/
+currency FK. `ForecastInputSnapshot`, timeline и results в БД не сохраняются и не являются
+финансовыми фактами.
 
 ## Точность и время
 
@@ -216,6 +252,18 @@ transactions. Фактические проценты — ledger transaction kin
 5. Полные формулы, cut-off, day-count, rounding, tax, early-close и XIRR описаны в
    [DEPOSIT_CALCULATIONS.md](DEPOSIT_CALCULATIONS.md).
 
+## Forecast and goal invariants
+
+1. Scenario и goal доступны только через обязательный owner scope; linked account и one-time
+   cashflow account обязаны принадлежать owner и совпадать по currency.
+2. Scenario/goal mutation пишет audit event, но никогда не создаёт transaction/posting.
+3. Forecast result вычисляется из immutable snapshot; `snapshot_id` зависит от всех input
+   facts, `captured_at` и currency, но не от порядка чтения строк.
+4. Forecast currencies не объединяются; FX отсутствует.
+5. Goal allocation сортирует `(priority, target_date, UUID)` и не использует optimizer/LLM.
+6. Полные формулы и ограничения описаны в
+   [FORECASTS_AND_GOALS.md](FORECASTS_AND_GOALS.md).
+
 ## Знак и примеры проводок
 
 Положительная posting увеличивает баланс account, отрицательная уменьшает. System-side
@@ -254,7 +302,7 @@ scope, составных owner FK и integration tests с двумя владе
 
 ## Миграции и downgrade
 
-`20261013_0009` применяется на чистую БД и проверяется `alembic check`. Downgrade до
+`20261014_0010` применяется на чистую БД и проверяется `alembic check`. Downgrade до
 `20261013_0001` удаляет финансовую схему и поэтому тестируется только на пустой disposable
 database. Для БД с реальными данными такой downgrade разрушителен и не является рабочей
 процедурой отката; используется forward fix/backup restore.
