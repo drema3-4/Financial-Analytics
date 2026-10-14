@@ -46,6 +46,20 @@ random value of at least 32 bytes, delivered via environment/secret manager and 
 `POSTGRES_PASSWORD` is independent. Development defaults are public, local-only values and are
 rejected when `APP_ENV=production`.
 
+`LLM_API_KEY` is optional for a local endpoint and required for an external production endpoint.
+It is represented as `SecretStr`, sent only in the Authorization header and never copied into
+provider payloads, status responses, exception messages or logs. External LLM URLs must be
+HTTPS in production and cannot contain embedded credentials, query strings or fragments.
+
+## LLM privacy boundary
+
+Advice receives only the sanitized `advice-context-v1`; it excludes identity fields, raw ledger
+rows, names, comments/descriptions and transaction/posting IDs. Optional user text is treated as
+untrusted data, redacted, and omitted for external providers unless the request explicitly opts
+in. Provider responses have no write tools and are schema/evidence validated before display.
+Provider request/response bodies are not logged. See [LLM.md](LLM.md) for the exact field and
+failure contracts.
+
 Generate a value, for example, with a trusted secret manager or `openssl rand -base64 48`.
 Do not paste generated values into tickets, command history, logs, source control or screenshots.
 

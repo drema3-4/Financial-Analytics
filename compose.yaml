@@ -9,6 +9,18 @@ x-backend-environment: &backend-environment
   CSRF_SECRET: ${CSRF_SECRET:-development-csrf-key-change-me-now-0001}
   EMAIL_TOKEN_SECRET: ${EMAIL_TOKEN_SECRET:-development-email-key-change-me-now-0001}
   SESSION_COOKIE_SECURE: "true"
+  LLM_PROVIDER: ${LLM_PROVIDER:-disabled}
+  LLM_BASE_URL: ${LLM_BASE_URL:-http://vllm:8000/v1}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-4B-AWQ}
+  LLM_ENDPOINT_SCOPE: ${LLM_ENDPOINT_SCOPE:-local}
+  LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-20}
+  LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
+  LLM_RETRY_BACKOFF_SECONDS: ${LLM_RETRY_BACKOFF_SECONDS:-0.25}
+  LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-800}
+  LLM_SUPPORTS_JSON_SCHEMA: ${LLM_SUPPORTS_JSON_SCHEMA:-true}
+  LLM_SUPPORTS_SYSTEM_MESSAGES: ${LLM_SUPPORTS_SYSTEM_MESSAGES:-true}
+  LLM_SUPPORTS_NON_THINKING: ${LLM_SUPPORTS_NON_THINKING:-true}
 
 x-backend: &backend
   image: financial-analytics-backend:01
@@ -111,5 +123,48 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  vllm:
+    profiles: ["local-llm"]
+    image: vllm/vllm-openai:v0.11.0@sha256:014a95f21c9edf6abe0aea6b07353f96baa4ec291c427bb1176dc7c93a85845c
+    command:
+      - --model
+      - Qwen/Qwen3-4B-AWQ
+      - --served-model-name
+      - Qwen/Qwen3-4B-AWQ
+      - --max-model-len
+      - ${VLLM_MAX_MODEL_LEN:-2048}
+      - --max-num-seqs
+      - "1"
+      - --gpu-memory-utilization
+      - ${VLLM_GPU_MEMORY_UTILIZATION:-0.80}
+    environment:
+      HF_HUB_DISABLE_XET: "1"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 80
+      start_period: 3m
+    ipc: host
+    ports:
+      - "8001:8000"
+    restart: unless-stopped
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+
 volumes:
+  huggingface_cache:
   postgres_data:

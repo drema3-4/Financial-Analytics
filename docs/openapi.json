@@ -136,6 +136,432 @@
         "title": "AdjustmentRequest",
         "type": "object"
       },
+      "AdviceContent": {
+        "additionalProperties": false,
+        "properties": {
+          "assumptions": {
+            "items": {
+              "maxLength": 800,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "confidence": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          },
+          "disclaimer": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Disclaimer",
+            "type": "string"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/AdviceObservation"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Observations",
+            "type": "array"
+          },
+          "risks": {
+            "items": {
+              "maxLength": 800,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Risks",
+            "type": "array"
+          },
+          "suggestions": {
+            "items": {
+              "maxLength": 800,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Suggestions",
+            "type": "array"
+          },
+          "summary": {
+            "maxLength": 1200,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "observations",
+          "suggestions",
+          "assumptions",
+          "risks",
+          "confidence",
+          "disclaimer"
+        ],
+        "title": "AdviceContent",
+        "type": "object"
+      },
+      "AdviceEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/AdviceFact"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Facts",
+            "type": "array"
+          },
+          "id": {
+            "pattern": "^[a-z0-9][a-z0-9:._-]{0,159}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "analytics",
+              "anomaly",
+              "forecast",
+              "goal"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "facts"
+        ],
+        "title": "AdviceEvidence",
+        "type": "object"
+      },
+      "AdviceFact": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "title": "AdviceFact",
+        "type": "object"
+      },
+      "AdviceObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 800,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "evidence_ids"
+        ],
+        "title": "AdviceObservation",
+        "type": "object"
+      },
+      "AdvicePrivacyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "external_consent_default": {
+            "default": false,
+            "title": "External Consent Default",
+            "type": "boolean"
+          },
+          "external_user_text_shared": {
+            "title": "External User Text Shared",
+            "type": "boolean"
+          },
+          "redactions_applied": {
+            "title": "Redactions Applied",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "external_user_text_shared",
+          "redactions_applied"
+        ],
+        "title": "AdvicePrivacyResponse",
+        "type": "object"
+      },
+      "AdviceProviderStatusResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/ProviderCapabilitiesResponse"
+          },
+          "context_version": {
+            "title": "Context Version",
+            "type": "string"
+          },
+          "endpoint_scope": {
+            "title": "Endpoint Scope",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "provider",
+          "model",
+          "endpoint_scope",
+          "capabilities",
+          "prompt_version",
+          "context_version"
+        ],
+        "title": "AdviceProviderStatusResponse",
+        "type": "object"
+      },
+      "AdviceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_external_user_text": {
+            "default": false,
+            "title": "Allow External User Text",
+            "type": "boolean"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "period_end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period End"
+          },
+          "period_start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Start"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
+          },
+          "scenario_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario Id"
+          },
+          "through": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Through"
+          }
+        },
+        "title": "AdviceRequest",
+        "type": "object"
+      },
+      "AdviceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "advice": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdviceContent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/ProviderCapabilitiesResponse"
+          },
+          "context_version": {
+            "title": "Context Version",
+            "type": "string"
+          },
+          "endpoint_scope": {
+            "title": "Endpoint Scope",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/AdviceEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "privacy": {
+            "$ref": "#/components/schemas/AdvicePrivacyResponse"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "retry_after_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After Seconds"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "provider",
+          "model",
+          "endpoint_scope",
+          "capabilities",
+          "prompt_version",
+          "context_version",
+          "advice",
+          "evidence",
+          "evidence_ids",
+          "error_code",
+          "retry_after_seconds",
+          "privacy"
+        ],
+        "title": "AdviceResponse",
+        "type": "object"
+      },
       "AnomalyFlagResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2706,6 +3132,30 @@
         "title": "ProfileResponse",
         "type": "object"
       },
+      "ProviderCapabilitiesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "json_schema": {
+            "title": "Json Schema",
+            "type": "boolean"
+          },
+          "non_thinking": {
+            "title": "Non Thinking",
+            "type": "boolean"
+          },
+          "system_messages": {
+            "title": "System Messages",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "json_schema",
+          "system_messages",
+          "non_thinking"
+        ],
+        "title": "ProviderCapabilitiesResponse",
+        "type": "object"
+      },
       "RateInput": {
         "additionalProperties": false,
         "properties": {
@@ -4342,6 +4792,113 @@
         "summary": "Create Adjustment",
         "tags": [
           "ledger"
+        ]
+      }
+    },
+    "/api/v1/advice": {
+      "post": {
+        "operationId": "generateFinancialAdvice",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdviceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdviceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Generate Advice",
+        "tags": [
+          "advice"
+        ]
+      }
+    },
+    "/api/v1/advice/status": {
+      "get": {
+        "operationId": "getAdviceProviderStatus",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdviceProviderStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "summary": "Get Advice Status",
+        "tags": [
+          "advice"
         ]
       }
     },

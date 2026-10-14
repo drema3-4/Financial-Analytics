@@ -90,6 +90,12 @@ Goal engine использует forecast/scenario и решает обратн�
 
 Advice orchestrator получает `AdviceContext`: агрегаты, цели, результат сценария и ограниченный список фактов. PII и сырые комментарии не отправляются внешнему провайдеру по умолчанию. Ответ валидируется Pydantic-схемой; некорректный ответ не показывается как достоверный.
 
+В этапе 09 context/prompt версионированы как `advice-context-v1` и
+`financial-advice-v1`. Context не содержит пользовательские names, email, descriptions или
+ledger IDs. Response schema запрещает extra fields, а application отдельно проверяет, что
+каждый observation ссылается только на выданный evidence ID. Use case неперсистентен и не
+добавляет финансовых либо security-sensitive mutations.
+
 ## 5. Минимальная модель данных
 
 | Область | Основные таблицы |
@@ -100,7 +106,7 @@ Advice orchestrator получает `AdviceContext`: агрегаты, цели
 | Scheduling | `recurring_rules`, `recurring_occurrences`, `jobs` |
 | Deposits | `deposit_terms`, `deposit_rate_periods`; plan вычисляется, fact хранится в linked ledger transactions |
 | Planning | `forecast_scenarios`, `forecast_runs`, `goals`, `goal_allocations` |
-| AI | `advice_requests`, `advice_results`, `llm_consents` |
+| AI | этап 09 не хранит advice; durable consent/history остаются будущим отдельным решением |
 | Control | `audit_events`, `idempotency_keys`, `outbox_events`, `schema_metadata` |
 
 Все пользовательские агрегаты имеют `owner_id`. Для финансовых таблиц — timestamps, версия optimistic locking и причинная ссылка на actor/request. На публичном сервере дополнительно рассматривается PostgreSQL RLS как defense in depth, но код всё равно обязан фильтровать владельца.
@@ -155,6 +161,11 @@ AdviceProvider.generate(request: AdvicePrompt, response_schema: type[T]) -> T
 ```
 
 Адаптер использует OpenAI-compatible `/v1/chat/completions` как минимальный общий знаменатель; поддержка `/v1/responses` может добавляться capability negotiation. Настройки: `base_url`, `api_key`, `model`, timeout, retry budget, max tokens, privacy mode. API key локального vLLM может быть фиктивным, но интерфейс одинаков.
+
+Реализация этапа 09 использует `LLM_PROVIDER=disabled|openai_compatible`, явный
+`LLM_ENDPOINT_SCOPE=local|external` и capability flags для JSON Schema, system message и
+non-thinking. Внешний untrusted user text имеет request-scoped consent default off и всегда
+проходит redaction. Upstream body, URL, key и prompt не включаются в ошибки/логи.
 
 Стартовый кандидат для 6 ГБ: официальный `Qwen/Qwen3-4B-AWQ`, 4-bit, с выключенным thinking для обычных советов, `max_model_len` сначала 2048–4096, `max_num_seqs=1`, ограничением GPU memory utilization. Это кандидат для измерения, не обещание совместимости: после загрузки модели обязателен smoke-test и измерение VRAM; при OOM — уменьшение контекста или модель 1.7B/0.6B, а не выгрузка части финансовой логики в LLM.
 

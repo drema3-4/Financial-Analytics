@@ -1,9 +1,9 @@
 # Financial Analytics
 
-Local-first приложение для учёта личных финансов. Этапы 05–08 дают idempotent ledger API для
+Local-first приложение для учёта личных финансов. Этапы 05–09 дают idempotent ledger API для
 accounts, categories, income/expense/transfer/adjustment/reversal, stable cursor pagination,
 UTF-8 CSV export, recurring rules, deposits, reconciled analytics, детерминированные forecasts,
-versioned scenarios и numeric goal plans с явным priority waterfall.
+versioned scenarios, numeric goal plans и необязательный provider-neutral LLM-советник.
 Generated TypeScript client построен поверх double-entry domain core. Identity
 использует одноразовый master bootstrap, Argon2id и ротируемые cookie sessions с CSRF/CORS.
 
@@ -44,6 +44,19 @@ placeholder.
 `/health/live` сообщает о работе процесса. `/health/ready` возвращает `200` только после
 успешного `SELECT 1` в PostgreSQL; при недоступности БД API продолжает стартовать и возвращает
 единый `503 application/problem+json`.
+
+LLM по умолчанию выключена (`LLM_PROVIDER=disabled`) и не участвует ни в startup, ни в
+readiness. Локальный vLLM запускается только явно:
+
+```powershell
+$env:LLM_PROVIDER = "openai_compatible"
+$env:LLM_BASE_URL = "http://vllm:8000/v1"
+docker compose --profile local-llm up --build --wait
+```
+
+Profile закрепляет vLLM image, `Qwen/Qwen3-4B-AWQ`, context 2048 и одну sequence. Настройка
+внешнего OpenAI-compatible endpoint, privacy consent, structured response contract и результат
+RTX 3050 smoke/VRAM/latency описаны в [docs/LLM.md](docs/LLM.md).
 
 Статус и логи:
 
@@ -177,13 +190,14 @@ docker compose config --quiet
 ```
 
 Revisions `20261013_0004`–`20261014_0010` добавляют Ledger API, recurring rules/outbox,
-deposits, analytics и planning records. CI проверяет
+deposits, analytics и planning records. Advice этапа 09 неперсистентен и не добавляет schema
+revision. CI проверяет
 upgrade на чистой PostgreSQL database, отсутствие drift между SQLAlchemy metadata и Alembic,
 integration tests и downgrade до пустого bootstrap revision. Полная схема и правила — в
 [docs/DATA_MODEL.md](docs/DATA_MODEL.md), а мониторинг/retry worker — в
 [docs/SCHEDULING_RUNBOOK.md](docs/SCHEDULING_RUNBOOK.md), формулы вкладов — в
 [docs/DEPOSIT_CALCULATIONS.md](docs/DEPOSIT_CALCULATIONS.md). Security model — в
-[docs/SECURITY.md](docs/SECURITY.md).
+[docs/SECURITY.md](docs/SECURITY.md), LLM boundary — в [docs/LLM.md](docs/LLM.md).
 
 ## Структура
 

@@ -6,6 +6,8 @@ from pydantic import SecretStr, ValidationError
 from financial_analytics_infra.settings import (
     DEFAULT_DEVELOPMENT_DATABASE_URL,
     AppEnvironment,
+    LlmEndpointScope,
+    LlmProvider,
     Settings,
 )
 
@@ -82,3 +84,51 @@ def test_all_environments_reject_wildcard_and_non_http_cors_origins() -> None:
             cors_origins=["https://app.example.test/path"],
             _env_file=None,
         )
+
+
+def test_llm_is_disabled_by_default_and_enabled_provider_requires_safe_url() -> None:
+    settings = Settings(app_env=AppEnvironment.TEST, _env_file=None)
+    assert settings.llm_provider is LlmProvider.DISABLED
+    assert settings.llm_api_key is None
+
+    with pytest.raises(ValidationError, match="requires LLM_BASE_URL"):
+        Settings(
+            app_env=AppEnvironment.TEST,
+            llm_provider=LlmProvider.OPENAI_COMPATIBLE,
+            _env_file=None,
+        )
+    with pytest.raises(ValidationError, match="without credentials"):
+        Settings(
+            app_env=AppEnvironment.TEST,
+            llm_provider=LlmProvider.OPENAI_COMPATIBLE,
+            llm_base_url="https://user:password@example.test/v1",
+            _env_file=None,
+        )
+
+
+def test_external_llm_production_requires_https_and_masked_api_key() -> None:
+    with pytest.raises(ValidationError, match="requires HTTPS"):
+        _external_production_settings("http://example.test/v1")
+    with pytest.raises(ValidationError, match="requires LLM_API_KEY"):
+        _external_production_settings("https://example.test/v1")
+
+    settings = _external_production_settings(
+        "https://example.test/v1", SecretStr("external-secret")
+    )
+    assert settings.llm_api_key == "external-secret"
+    assert "external-secret" not in repr(settings)
+
+
+def _external_production_settings(base_url: str, api_key: SecretStr | None = None) -> Settings:
+    return Settings(
+        app_env=AppEnvironment.PRODUCTION,
+        database_url_secret=SecretStr("postgresql+psycopg://user:secret@database/app"),
+        session_secret_value=SecretStr("s" * 32),
+        csrf_secret_value=SecretStr("c" * 32),
+        email_token_secret_value=SecretStr("e" * 32),
+        llm_provider=LlmProvider.OPENAI_COMPATIBLE,
+        llm_endpoint_scope=LlmEndpointScope.EXTERNAL,
+        llm_base_url=base_url,
+        llm_api_key_value=api_key,
+        _env_file=None,
+    )

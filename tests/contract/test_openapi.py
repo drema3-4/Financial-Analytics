@@ -189,3 +189,24 @@ def test_openapi_documents_forecast_scenarios_and_numeric_goal_plans() -> None:
     }.issubset(goal)
     rate = schemas["ScenarioInput"]["properties"]["annual_inflation"]
     assert rate["$ref"].endswith("/RateInput")
+
+
+def test_openapi_documents_read_only_structured_advice_contract() -> None:
+    schema = create_app(Settings(app_env=AppEnvironment.TEST, _env_file=None)).openapi()
+    paths = schema["paths"]
+    assert paths["/api/v1/advice/status"]["get"]["operationId"] == ("getAdviceProviderStatus")
+    advice = paths["/api/v1/advice"]
+    assert set(advice) == {"post"}
+    assert advice["post"]["operationId"] == "generateFinancialAdvice"
+    request = schema["components"]["schemas"]["AdviceRequest"]
+    assert request["properties"]["allow_external_user_text"]["default"] is False
+    content = schema["components"]["schemas"]["AdviceContent"]
+    assert {
+        "summary",
+        "observations",
+        "suggestions",
+        "assumptions",
+        "risks",
+        "confidence",
+        "disclaimer",
+    } <= set(content["required"])

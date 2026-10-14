@@ -258,3 +258,62 @@ class SchedulingRepository(Protocol):
         retried_at: Instant,
         audit_event: AuditEvent,
     ) -> OutboxJob | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class AdviceProviderCapabilities:
+    json_schema: bool
+    system_messages: bool
+    non_thinking: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AdviceProviderDescriptor:
+    provider: str
+    model: str | None
+    endpoint_scope: str
+
+
+@dataclass(frozen=True, slots=True)
+class AdviceMessage:
+    role: str
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
+class AdvicePrompt:
+    version: str
+    messages: tuple[AdviceMessage, ...]
+    response_schema: dict[str, object]
+    max_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class AdviceProviderResponse:
+    payload: dict[str, object]
+
+
+class AdviceProviderError(Exception):
+    """Safe provider failure without upstream body, URL, credentials, or user data."""
+
+    def __init__(
+        self,
+        code: str,
+        *,
+        retryable: bool = False,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        super().__init__(code)
+        self.code = code
+        self.retryable = retryable
+        self.retry_after_seconds = retry_after_seconds
+
+
+class AdviceProvider(Protocol):
+    @property
+    def descriptor(self) -> AdviceProviderDescriptor: ...
+
+    @property
+    def capabilities(self) -> AdviceProviderCapabilities: ...
+
+    def generate(self, prompt: AdvicePrompt) -> AdviceProviderResponse: ...

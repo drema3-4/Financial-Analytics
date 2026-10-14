@@ -4,15 +4,58 @@
 
 ## Текущее состояние
 
-- Стадия: завершён `08 — Forecast & Goals`; deterministic replay, goal-planning и PostgreSQL
-  gates зелёные.
-- Реализация: immutable snapshot и versioned assumptions питают чистый monthly timeline;
-  baseline объединяет balances, recurrence, deposit schedules и оценку нерегулярных расходов,
-  а owner-scoped scenarios/goals доступны под `/api/v1`, revision `20261014_0010` применена.
-- Следующий этап: `09 — LLM Advice`; не начат и требует отдельного явного запроса.
+- Стадия: завершён `09 — LLM Advice`; provider-neutral boundary, privacy/structured response и
+  fake OpenAI-compatible contracts реализованы, core default остаётся `LLM_PROVIDER=disabled`.
+- Реализация: `advice-context-v1` собирается только из owner-scoped aggregates, deterministic
+  forecast и numeric goal plans; `financial-advice-v1` не выдаёт tools, response schema и
+  evidence IDs проверяются до показа. `/api/v1/advice` ничего не сохраняет и возвращает
+  graceful status при disabled/unavailable/invalid provider.
+- Следующий этап: `10 — Frontend Foundation`; не начат и требует отдельного явного запроса.
 - Host global toolchain из снимка этапа 00 всё ещё может отличаться от baseline; repository
   gate подтверждён в Python 3.12.12 environment, pnpm 12.12.1 и закреплённых containers.
-- LLM не входит в core startup; local-vLLM остаётся задачей этапа 09.
+- LLM не входит в core startup. Compose profile `local-llm` и `Qwen/Qwen3-4B-AWQ` **tested**
+  на RTX 3050 6 ГБ: context 2048, одна sequence, GPU reserve `0.80`, non-thinking smoke,
+  VRAM/latency и полный strict-schema adapter round-trip подтверждены; детали в `docs/LLM.md`.
+
+## Готово в этапе 09
+
+- Application `AdviceProvider` port не содержит HTTP/SDK types. OpenAI-compatible adapter
+  настраивает `base_url`, secret API key, model, timeout, retry budget и capability flags;
+  `disabled` — отдельный provider и default.
+- Bounded retry охватывает timeout/transport, `408/409/425/429/5xx`; остальные `4xx` не
+  повторяются. Upstream body, URL, key, prompt и financial context не входят в ошибки/логи.
+- Advice context исключает identity, names, comments/descriptions, raw transactions и ledger
+  IDs. External user text требует request-scoped consent default off, остаётся untrusted data и
+  проходит email/phone/card/token/secret redaction даже после consent.
+- Strict response содержит summary, observations с evidence IDs, suggestions, assumptions,
+  risks, confidence и фиксированный disclaimer. Extra/wrong fields и hallucinated evidence
+  отклоняют весь ответ.
+- `GET /api/v1/advice/status` и read/compute-only `POST /api/v1/advice` закреплены в OpenAPI и
+  generated TypeScript client. Optional provider не участвует в readiness и не получает write
+  tools; advice не создаёт ledger, audit, idempotency или другие DB records.
+- Fake OpenAI-compatible server проверяет success, invalid JSON/envelope/schema, timeout,
+  bounded retry, non-retryable error, rate limit/`Retry-After`, prompt injection framing,
+  redaction и отсутствие API key в body.
+- `local-llm` использует pinned `vllm/vllm-openai:v0.11.0` manifest, GPU reservation,
+  persistent Hugging Face cache, `/health`, `Qwen/Qwen3-4B-AWQ`, context 2048, одну sequence и
+  per-request non-thinking. Проверенный reserve для 6 ГБ — `0.80`; Xet отключён без отключения
+  TLS verification. Core Compose model profile не включает.
+- ADR-018 и `docs/LLM.md` фиксируют неперсистентный use case, privacy boundary, provider config,
+  запуск профиля и честный hardware-test result.
+
+## Проверки этапа 09
+
+- Backend: Poetry lock, Ruff lint/format, strict mypy и generated OpenAPI/client drift — зелёные;
+  полный PostgreSQL gate на pinned PostgreSQL 18: `109 passed`, migrations зелёные, total
+  coverage `87.01%` при required `85%`; fake-provider contract matrix входит в этот прогон.
+- Frontend на pinned pnpm `12.12.1`: ESLint, Prettier, TypeScript, production build зелёные;
+  `8 passed`, coverage `100%`.
+- Compose: production API/web images пересобраны; PostgreSQL, migrations, API, worker и web
+  прошли runtime health с `LLM_PROVIDER=disabled`. Core service list не содержит vLLM; pinned
+  image manifest и `local-llm` runtime проверены.
+- RTX 3050 6 ГБ (`6144 MiB`, driver `577.05`): vLLM `/health=200`; observed max `5528 MiB`;
+  simple non-thinking latency `3777 ms` cold и `81/100 ms` warm. Полный adapter + strict schema
+  + evidence validation — `85,313 ms` с timeout 120 s; CUDA OOM не было.
 
 ## Готово в этапе 08
 
@@ -184,3 +227,4 @@
 | 06 Deposits | завершён | `feat(06): model deposits and compound interest` | 75 backend tests, 86.61%, fixtures/property/integration/contract, 8 frontend tests, Compose |
 | 07 Analytics | завершён | `feat(07): provide reconciled financial analytics` | 82 backend tests, 87.37%, reconciliation/plan/integration/contract, 8 frontend tests, Compose |
 | 08 Forecast & Goals | завершён | `feat(08): forecast finances and plan goals` | 93 backend tests, 86.74%, golden/property/integration/contract, 8 frontend tests |
+| 09 LLM Advice | завершён | `feat(09): add private provider-neutral financial advice` | 109 backend / 87.01%, fake provider matrix, 8 frontend tests; RTX 3050 local vLLM tested |

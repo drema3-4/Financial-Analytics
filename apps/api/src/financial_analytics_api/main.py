@@ -7,6 +7,7 @@ import anyio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from financial_analytics_api.advice import router as advice_router
 from financial_analytics_api.analytics import router as analytics_router
 from financial_analytics_api.deposits import router as deposits_router
 from financial_analytics_api.errors import install_error_handlers
@@ -17,12 +18,15 @@ from financial_analytics_api.ledger import router as ledger_router
 from financial_analytics_api.logging import configure_logging
 from financial_analytics_api.middleware import RequestContextMiddleware
 from financial_analytics_api.scheduling import router as scheduling_router
+from financial_analytics_app.advice import AdviceService, DisabledAdviceProvider
 from financial_analytics_app.analytics import AnalyticsService
 from financial_analytics_app.deposits import DepositService
 from financial_analytics_app.forecast import ForecastService
 from financial_analytics_app.identity import AuthService
 from financial_analytics_app.ledger import LedgerService
+from financial_analytics_app.ports import AdviceProvider, AdviceProviderCapabilities
 from financial_analytics_app.scheduling import SchedulingService
+from financial_analytics_infra.advice import OpenAICompatibleAdviceProvider
 from financial_analytics_infra.database import Database
 from financial_analytics_infra.identity import PostgresIdentityStore
 from financial_analytics_infra.repositories import PostgresUnitOfWorkFactory
@@ -32,7 +36,7 @@ from financial_analytics_infra.security import (
     HmacSecretProvider,
     InMemorySlidingWindowRateLimiter,
 )
-from financial_analytics_infra.settings import Settings
+from financial_analytics_infra.settings import LlmProvider, Settings
 
 ReadinessCheck = Callable[[], Awaitable[bool]]
 
@@ -46,6 +50,7 @@ def create_app(
     deposit_service: DepositService | None = None,
     analytics_service: AnalyticsService | None = None,
     forecast_service: ForecastService | None = None,
+    advice_service: AdviceService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
     configure_logging(resolved_settings.log_level)
@@ -92,6 +97,33 @@ def create_app(
         assert database is not None
         forecast_service = ForecastService(PostgresUnitOfWorkFactory(database.engine))
 
+    if advice_service is None:
+        advice_provider: AdviceProvider
+        if resolved_settings.llm_provider is LlmProvider.DISABLED:
+            advice_provider = DisabledAdviceProvider()
+        else:
+            assert resolved_settings.llm_base_url is not None
+            advice_provider = OpenAICompatibleAdviceProvider(
+                base_url=resolved_settings.llm_base_url,
+                api_key=resolved_settings.llm_api_key,
+                model=resolved_settings.llm_model,
+                timeout_seconds=resolved_settings.llm_timeout_seconds,
+                max_retries=resolved_settings.llm_max_retries,
+                retry_backoff_seconds=resolved_settings.llm_retry_backoff_seconds,
+                endpoint_scope=resolved_settings.llm_endpoint_scope.value,
+                capabilities=AdviceProviderCapabilities(
+                    json_schema=resolved_settings.llm_supports_json_schema,
+                    system_messages=resolved_settings.llm_supports_system_messages,
+                    non_thinking=resolved_settings.llm_supports_non_thinking,
+                ),
+            )
+        advice_service = AdviceService(
+            analytics_service,
+            forecast_service,
+            advice_provider,
+            max_tokens=resolved_settings.llm_max_tokens,
+        )
+
     if readiness_check is None:
 
         async def database_readiness_check() -> bool:
@@ -121,6 +153,7 @@ def create_app(
     app.state.deposit_service = deposit_service
     app.state.analytics_service = analytics_service
     app.state.forecast_service = forecast_service
+    app.state.advice_service = advice_service
     app.add_middleware(
         CORSMiddleware,
         allow_origins=resolved_settings.cors_origins,
@@ -145,6 +178,7 @@ def create_app(
     app.include_router(deposits_router)
     app.include_router(analytics_router)
     app.include_router(forecast_router)
+    app.include_router(advice_router)
     return app
 
 

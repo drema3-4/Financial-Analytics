@@ -27,6 +27,74 @@ export type AdjustmentRequest = {
   tag_ids?: Array<string>;
 };
 
+export type AdviceContent = {
+  summary: string;
+  observations: Array<AdviceObservation>;
+  suggestions: Array<string>;
+  assumptions: Array<string>;
+  risks: Array<string>;
+  confidence: "low" | "medium" | "high";
+  disclaimer: string;
+};
+
+export type AdviceEvidence = {
+  id: string;
+  kind: "analytics" | "anomaly" | "forecast" | "goal";
+  facts: Array<AdviceFact>;
+};
+
+export type AdviceFact = {
+  name: string;
+  value: string;
+};
+
+export type AdviceObservation = {
+  text: string;
+  evidence_ids: Array<string>;
+};
+
+export type AdvicePrivacyResponse = {
+  external_consent_default?: boolean;
+  external_user_text_shared: boolean;
+  redactions_applied: number;
+};
+
+export type AdviceProviderStatusResponse = {
+  status: string;
+  provider: string;
+  model: (string) | (null);
+  endpoint_scope: string;
+  capabilities: ProviderCapabilitiesResponse;
+  prompt_version: string;
+  context_version: string;
+};
+
+export type AdviceRequest = {
+  currency?: (string) | (null);
+  through?: (string) | (null);
+  scenario_id?: (string) | (null);
+  period_start?: (string) | (null);
+  period_end?: (string) | (null);
+  question?: (string) | (null);
+  allow_external_user_text?: boolean;
+};
+
+export type AdviceResponse = {
+  status: string;
+  provider: string;
+  model: (string) | (null);
+  endpoint_scope: string;
+  capabilities: ProviderCapabilitiesResponse;
+  prompt_version: string;
+  context_version: string;
+  advice: (AdviceContent) | (null);
+  evidence: Array<AdviceEvidence>;
+  evidence_ids: Array<string>;
+  error_code: (string) | (null);
+  retry_after_seconds: (number) | (null);
+  privacy: AdvicePrivacyResponse;
+};
+
 export type AnomalyFlagResponse = {
   bucket_start: string;
   bucket_end: string;
@@ -543,6 +611,12 @@ export type ProfileResponse = {
   status: string;
   is_master: boolean;
   created_at: string;
+};
+
+export type ProviderCapabilitiesResponse = {
+  json_schema: boolean;
+  system_messages: boolean;
+  non_thinking: boolean;
 };
 
 export type RateInput = {
@@ -1500,6 +1574,20 @@ export class FinancialAnalyticsClient {
     const query = new URLSearchParams();
     const headers: Record<string, string> = {};
     return this.request<ForecastComparisonResponse>("POST", path, query, args.body, headers);
+  }
+
+  async getAdviceProviderStatus(): Promise<AdviceProviderStatusResponse> {
+    let path = "/api/v1/advice/status";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    return this.request<AdviceProviderStatusResponse>("GET", path, query, undefined, headers);
+  }
+
+  async generateFinancialAdvice(args: { body: AdviceRequest; }): Promise<AdviceResponse> {
+    let path = "/api/v1/advice";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    return this.request<AdviceResponse>("POST", path, query, args.body, headers);
   }
 
   private async request<T>(

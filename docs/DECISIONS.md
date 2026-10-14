@@ -294,3 +294,38 @@ priority, target date и UUID. Required contribution, allocation, completion dat
 выделенный рубль без непрозрачной оптимизации. Разделение planning records и ledger сохраняет
 фактическую историю неизменной.
 
+## ADR-018: provider-neutral advice как неперсистентный read/compute use case
+
+**Дата:** 2026-10-14.
+
+**Решение:** application-слой получает собственный `AdviceProvider` port с простыми
+dataclass-контрактами сообщений, capabilities, descriptor и результата. OpenAI-compatible
+adapter остаётся в infrastructure и вызывает только `/v1/chat/completions`; его HTTP/SDK-типы
+не пересекают application boundary. `disabled` является полноценным provider mode и значением
+по умолчанию.
+
+`AdviceContext` версии `advice-context-v1` строится заново для каждого запроса только из
+owner-scoped analytics aggregates, deterministic forecast, numeric goal plans и ограниченного
+набора безопасных фактов. Account/category/goal names, email, transaction descriptions,
+transaction/posting IDs и сырые строки ledger в context не входят. Необязательный текст
+вопроса сериализуется как отдельное untrusted data-поле, проходит redaction и для внешнего
+endpoint передаётся только при явном request-scoped consent, выключенном по умолчанию.
+
+Prompt версии `financial-advice-v1` не даёт модели tools и требует строгий JSON contract.
+Application повторно валидирует schema и отклоняет любой observation, сославшийся на evidence
+ID вне переданного context. `POST /api/v1/advice` является read/compute операцией без CSRF,
+idempotency record, audit mutation или записи результата; disabled, timeout, rate limit и
+invalid provider response возвращаются как безопасный status внутри `200`, поэтому optional
+LLM не влияет на core readiness.
+
+Локальный vLLM запускается только Compose-профилем `local-llm`, не является dependency API и
+использует pinned image/model configuration. Первичный профиль ограничен контекстом 2048,
+одной sequence и non-thinking request capability. Фактическая совместимость с RTX 3050 6 ГБ
+фиксируется только после отдельного smoke/VRAM/latency прогона; отсутствие Docker, OOM или
+ошибка загрузки документируются как результат, а не маскируются fallback-логикой core.
+
+**Почему:** такой разрез сохраняет финансовые вычисления детерминированными, делает утечку
+сырого пользовательского текста явным opt-in и позволяет менять локальный/внешний endpoint
+одной конфигурацией. Неперсистентный ответ не создаёт нового источника финансовой истины, а
+graceful status сохраняет обязательную работоспособность приложения без LLM.
+

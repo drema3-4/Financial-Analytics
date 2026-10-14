@@ -1,5 +1,15 @@
 """Application use cases and persistence ports."""
 
+from financial_analytics_app.advice import (
+    ADVICE_CONTEXT_VERSION,
+    ADVICE_PROMPT_VERSION,
+    AdviceContent,
+    AdviceContext,
+    AdviceOutcome,
+    AdviceService,
+    AdviceStatus,
+    DisabledAdviceProvider,
+)
 from financial_analytics_app.analytics import AnalyticsService
 from financial_analytics_app.deposits import (
     DepositService,
@@ -19,6 +29,13 @@ from financial_analytics_app.ledger import (
     TransactionPage,
 )
 from financial_analytics_app.ports import (
+    AdviceMessage,
+    AdvicePrompt,
+    AdviceProvider,
+    AdviceProviderCapabilities,
+    AdviceProviderDescriptor,
+    AdviceProviderError,
+    AdviceProviderResponse,
     AuditEvent,
     DepositRepository,
     ForecastRepository,
@@ -42,6 +59,20 @@ from financial_analytics_app.services import (
 )
 
 __all__ = [
+    "ADVICE_CONTEXT_VERSION",
+    "ADVICE_PROMPT_VERSION",
+    "AdviceContent",
+    "AdviceContext",
+    "AdviceMessage",
+    "AdviceOutcome",
+    "AdvicePrompt",
+    "AdviceProvider",
+    "AdviceProviderCapabilities",
+    "AdviceProviderDescriptor",
+    "AdviceProviderError",
+    "AdviceProviderResponse",
+    "AdviceService",
+    "AdviceStatus",
     "AuditEvent",
     "AccountWithBalance",
     "AnalyticsService",
@@ -49,6 +80,7 @@ __all__ = [
     "DepositRepository",
     "DepositService",
     "DepositValuation",
+    "DisabledAdviceProvider",
     "ForecastComparison",
     "ForecastComparisonItem",
     "ForecastRepository",

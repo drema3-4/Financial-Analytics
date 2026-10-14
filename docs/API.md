@@ -1,4 +1,4 @@
-# API contract through milestone 08
+# API contract through milestone 09
 
 FastAPI публикует актуальную OpenAPI-схему по `/openapi.json` и интерактивную документацию
 по `/docs`. Зафиксированный snapshot находится в `docs/openapi.json`; из него
@@ -166,6 +166,26 @@ contribution gap, allocated amount, expected completion date и shortfall. Вс�
 values остаются decimal strings. Формулы и ограничения описаны в
 [FORECASTS_AND_GOALS.md](FORECASTS_AND_GOALS.md); ответ содержит явный disclaimer, что прогноз
 не является гарантией.
+
+## Advice (read/compute only)
+
+| Method | Path | Result |
+|---|---|---|
+| `GET` | `/advice/status` | provider mode/capabilities без URL или secret |
+| `POST` | `/advice` | sanitized context → валидированный structured advice или graceful status |
+
+`POST /advice` использует обычную authenticated session, но не требует CSRF или
+`Idempotency-Key`, потому что не меняет данные. Baseline request требует `through`; сохранённый
+scenario можно выбрать через `scenario_id`. `currency` по умолчанию равна profile base
+currency. `period_start`/`period_end` задаются парой и должны быть calendar-month aligned;
+без них используется текущий локальный месяц.
+
+`question` — необязательные untrusted data. Для внешнего endpoint она не передаётся при
+default `allow_external_user_text=false`; consent действует только на этот запрос и не
+отключает redaction. Status endpoint возвращает `configured` без сетевой проверки, а генерация
+— `available`, `disabled`, `unavailable` либо `invalid_response`. Response также содержит тот
+же sanitized evidence map, список допустимых IDs, privacy metadata и advice только после строгой
+schema/evidence проверки. Полный privacy/provider contract описан в [LLM.md](LLM.md).
 
 ### Пример account с opening balance
 

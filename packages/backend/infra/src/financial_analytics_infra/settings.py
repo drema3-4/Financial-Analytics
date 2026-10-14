@@ -21,6 +21,16 @@ class AppEnvironment(StrEnum):
     PRODUCTION = "production"
 
 
+class LlmProvider(StrEnum):
+    DISABLED = "disabled"
+    OPENAI_COMPATIBLE = "openai_compatible"
+
+
+class LlmEndpointScope(StrEnum):
+    LOCAL = "local"
+    EXTERNAL = "external"
+
+
 class Settings(BaseSettings):
     """Validated runtime configuration loaded from environment variables.
 
@@ -65,6 +75,18 @@ class Settings(BaseSettings):
     access_cookie_name: str = "fa_access"
     refresh_cookie_name: str = "fa_refresh"
     csrf_cookie_name: str = "fa_csrf"
+    llm_provider: LlmProvider = LlmProvider.DISABLED
+    llm_base_url: str | None = None
+    llm_api_key_value: SecretStr | None = Field(default=None, alias="LLM_API_KEY", repr=False)
+    llm_model: str = "Qwen/Qwen3-4B-AWQ"
+    llm_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    llm_max_retries: int = Field(default=2, ge=0, le=3)
+    llm_retry_backoff_seconds: float = Field(default=0.25, ge=0, le=5)
+    llm_max_tokens: int = Field(default=800, ge=128, le=4096)
+    llm_endpoint_scope: LlmEndpointScope = LlmEndpointScope.LOCAL
+    llm_supports_json_schema: bool = True
+    llm_supports_system_messages: bool = True
+    llm_supports_non_thinking: bool = True
 
     @field_validator("log_level")
     @classmethod
@@ -104,8 +126,31 @@ class Settings(BaseSettings):
             raise ValueError("identity secrets must contain at least 32 UTF-8 bytes")
         return value
 
+    @field_validator("llm_base_url")
+    @classmethod
+    def validate_llm_base_url(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.rstrip("/")
+        parsed = urlsplit(normalized)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.query
+            or parsed.fragment
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError("LLM_BASE_URL must be an HTTP(S) URL without credentials or query")
+        return normalized
+
     @model_validator(mode="after")
     def protect_production(self) -> Settings:
+        if self.llm_provider is LlmProvider.OPENAI_COMPATIBLE:
+            if self.llm_base_url is None:
+                raise ValueError("openai_compatible LLM provider requires LLM_BASE_URL")
+            if not self.llm_model.strip():
+                raise ValueError("openai_compatible LLM provider requires LLM_MODEL")
         if self.app_env is AppEnvironment.PRODUCTION:
             if self.database_url == DEFAULT_DEVELOPMENT_DATABASE_URL:
                 raise ValueError("production requires an explicit DATABASE_URL")
@@ -125,6 +170,15 @@ class Settings(BaseSettings):
                 raise ValueError("production requires explicit identity secrets")
             if any(secret.startswith("replace-with-") for secret in configured_secrets):
                 raise ValueError("production identity secrets still contain placeholders")
+            if (
+                self.llm_provider is LlmProvider.OPENAI_COMPATIBLE
+                and self.llm_endpoint_scope is LlmEndpointScope.EXTERNAL
+            ):
+                assert self.llm_base_url is not None
+                if urlsplit(self.llm_base_url).scheme != "https":
+                    raise ValueError("production external LLM endpoint requires HTTPS")
+                if self.llm_api_key_value is None:
+                    raise ValueError("production external LLM endpoint requires LLM_API_KEY")
         return self
 
     @property
@@ -142,3 +196,9 @@ class Settings(BaseSettings):
     @property
     def email_token_secret(self) -> str:
         return self.email_token_secret_value.get_secret_value()
+
+    @property
+    def llm_api_key(self) -> str | None:
+        if self.llm_api_key_value is None:
+            return None
+        return self.llm_api_key_value.get_secret_value()
