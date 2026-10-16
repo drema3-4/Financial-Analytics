@@ -3270,8 +3270,25 @@
             "default": "up",
             "title": "Database",
             "type": "string"
+          },
+          "jobs": {
+            "const": "up",
+            "default": "up",
+            "title": "Jobs",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "configured",
+              "disabled"
+            ],
+            "title": "Provider",
+            "type": "string"
           }
         },
+        "required": [
+          "provider"
+        ],
         "title": "ReadinessChecks",
         "type": "object"
       },

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from urllib.parse import urlsplit
 
@@ -87,6 +88,7 @@ class Settings(BaseSettings):
     llm_supports_json_schema: bool = True
     llm_supports_system_messages: bool = True
     llm_supports_non_thinking: bool = True
+    test_clock_at: datetime | None = None
 
     @field_validator("log_level")
     @classmethod
@@ -146,6 +148,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def protect_production(self) -> Settings:
+        if self.test_clock_at is not None:
+            if self.app_env is not AppEnvironment.TEST:
+                raise ValueError("TEST_CLOCK_AT is allowed only when APP_ENV=test")
+            if self.test_clock_at.tzinfo is None or self.test_clock_at.utcoffset() is None:
+                raise ValueError("TEST_CLOCK_AT must include a UTC offset")
         if self.llm_provider is LlmProvider.OPENAI_COMPATIBLE:
             if self.llm_base_url is None:
                 raise ValueError("openai_compatible LLM provider requires LLM_BASE_URL")

@@ -14,6 +14,9 @@ malicious browser extension, memory scraping of the live API process and denial 
 beyond one API process are outside the stage-03 boundary. CSP, proxy limits and distributed
 rate limiting are deployment hardening work, not substitutes for the controls here.
 
+The executable stage-12 threat matrix, scanner failure policy and exception format are in
+[`HARDENING.md`](HARDENING.md). There are no accepted critical/high findings or suppressions.
+
 ## Controls
 
 - Passwords use Argon2id (`m=65536`, `t=3`, `p=4`, 32-byte output, 16-byte random salt).

@@ -2414,6 +2414,7 @@ function AdvicePage({ api, profile }: WorkspaceProps) {
     mutationFn: () =>
       api.generateAdvice({
         currency: profile.base_currency,
+        through: nextYearIso(),
         question: question || null,
         allow_external_user_text: consent,
       }),
@@ -2436,7 +2437,7 @@ function AdvicePage({ api, profile }: WorkspaceProps) {
       </Notice>
       {status.error ? (
         <QueryError error={status.error} retry={() => void status.refetch()} />
-      ) : status.data?.status !== "available" ? (
+      ) : status.data?.status !== "available" && status.data?.status !== "configured" ? (
         <EmptyState
           title="Советник недоступен"
           description="Финансовые функции продолжают работать без LLM. Проверьте статус провайдера позже."

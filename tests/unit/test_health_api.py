@@ -35,9 +35,14 @@ def test_readiness_reports_the_database_check() -> None:
         response = client.get("/health/ready", headers={"X-Correlation-ID": "deployment-42"})
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ready", "checks": {"database": "up"}}
+    assert response.json() == {
+        "status": "ready",
+        "checks": {"database": "up", "jobs": "up", "provider": "disabled"},
+    }
     assert response.headers["X-Correlation-ID"] == "deployment-42"
     assert response.headers["X-Request-ID"]
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["Cache-Control"] == "no-store"
 
 
 def test_request_id_is_preserved_when_safe_and_replaced_when_unsafe() -> None:

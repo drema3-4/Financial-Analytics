@@ -320,7 +320,7 @@ def test_cursor_stability_and_utf8_csv_escaping(postgres_engine: Engine) -> None
     app = _make_app(postgres_engine, {"owner": owner_id})
     with _client(app, "owner", owner_id) as client:
         account = _create_account(client, owner_id, "pagination-account", "Journal")
-        descriptions = ['кофе, "утро"\nвторая строка', "middle", "oldest"]
+        descriptions = ['  =HYPERLINK("https://evil.test",кофе)\nвторая строка', "middle", "oldest"]
         transaction_ids: list[str] = []
         for index, description in enumerate(descriptions):
             response = client.post(
@@ -359,10 +359,20 @@ def test_cursor_stability_and_utf8_csv_escaping(postgres_engine: Engine) -> None
         )
         assert [item["id"] for item in second_page.json()["items"]] == [transaction_ids[2]]
 
+        injection_search = client.get(
+            "/api/v1/transactions",
+            params={"search": "' OR 1=1 --", "limit": 100},
+        )
+        assert injection_search.status_code == 200
+        assert injection_search.json()["items"] == []
+
         exported = client.get("/api/v1/transactions/export.csv", params={"kind": "adjustment"})
         assert exported.status_code == 200
         assert exported.content.startswith(b"\xef\xbb\xbf")
         assert "text/csv" in exported.headers["content-type"]
+        assert exported.headers["content-disposition"] == 'attachment; filename="transactions.csv"'
+        assert exported.headers["x-content-type-options"] == "nosniff"
+        assert exported.headers["cache-control"] == "no-store"
         rows = list(csv.DictReader(io.StringIO(exported.content.decode("utf-8-sig"))))
         original = next(row for row in rows if row["id"] == transaction_ids[0])
-        assert original["description"] == descriptions[0]
+        assert original["description"] == "'" + descriptions[0]

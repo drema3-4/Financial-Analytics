@@ -42,7 +42,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["**/*.config.{js,ts}", "infra/docker/web/*.mjs"],
+    files: ["**/*.config.{js,ts}", "infra/docker/web/*.mjs", "scripts/*.mjs"],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: {
       globals: globals.node,

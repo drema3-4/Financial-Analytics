@@ -645,6 +645,8 @@ export type RatioMetricResponse = {
 
 export type ReadinessChecks = {
   database?: "up";
+  jobs?: "up";
+  provider: "configured" | "disabled";
 };
 
 export type ReadinessResponse = {

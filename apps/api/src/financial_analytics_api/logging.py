@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from financial_analytics_api.context import correlation_id_context, request_id_context
+from financial_analytics_infra.logging import redact_sensitive_text
 
 
 class JsonFormatter(logging.Formatter):
@@ -16,7 +17,7 @@ class JsonFormatter(logging.Formatter):
             "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": redact_sensitive_text(record.getMessage()),
         }
         request_id = request_id_context.get()
         correlation_id = correlation_id_context.get()
@@ -24,12 +25,12 @@ class JsonFormatter(logging.Formatter):
             payload["request_id"] = request_id
         if correlation_id is not None:
             payload["correlation_id"] = correlation_id
-        for attribute in ("event", "http_method", "http_status"):
+        for attribute in ("event", "http_method", "http_status", "duration_ms"):
             value = getattr(record, attribute, None)
             if value is not None:
                 payload[attribute] = value
         if record.exc_info is not None:
-            payload["exception"] = self.formatException(record.exc_info)
+            payload["exception"] = redact_sensitive_text(self.formatException(record.exc_info))
         return json.dumps(payload, ensure_ascii=False)
 
 

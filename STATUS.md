@@ -4,17 +4,55 @@
 
 ## Текущее состояние
 
-- Стадия: завершён `11 — Finance UI`; все пользовательские сценарии существующего финансового
-  API доступны через адаптивный интерфейс.
-- Реализация: TanStack Query единообразно управляет server state без optimistic financial
-  truth; dashboard, ledger journal, recurring rules, deposits, analytics, forecast/goals и
-  advice показывают server-derived данные, freshness, timezone, currency и privacy boundaries.
-- Следующий этап: `12 — E2E & Hardening`; не начат и требует отдельного явного запроса.
+- Стадия: завершён `12 — E2E, безопасность и эксплуатационная устойчивость`; семь сценариев
+  `SPEC.md` доказаны через реальный Chromium, FastAPI и отдельную PostgreSQL database.
+- Реализация: системная reconciliation, threat tests, безопасная наблюдаемость, recovery scripts,
+  restore drill, resilience/performance gates и CI supply-chain policy входят в milestone.
+- Следующий шаг: настроить production secrets/TLS, backup storage/retention и shared rate limiter
+  для выбранной deployment environment; новых продуктовых возможностей этот этап не добавляет.
 - Host global toolchain из снимка этапа 00 всё ещё может отличаться от baseline; repository
   gate подтверждён в Python 3.12.12 environment, pnpm 12.12.1 и закреплённых containers.
 - LLM не входит в core startup. Compose profile `local-llm` и `Qwen/Qwen3-4B-AWQ` **tested**
   на RTX 3050 6 ГБ: context 2048, одна sequence, GPU reserve `0.80`, non-thinking smoke,
   VRAM/latency и полный strict-schema adapter round-trip подтверждены; детали в `docs/LLM.md`.
+
+## Готово в этапе 12
+
+- Семь независимых Playwright system tests реализуют все numbered scenarios `SPEC.md`. Каждый
+  тест сбрасывает только изолированную `*_e2e` database, API и browser используют fixed UTC
+  clock, а trace/screenshot/video сохраняются только при failure.
+- Scenario 2 доказывает полный путь UI action → API transaction → exact zero-sum postings →
+  analytics evidence/net worth → forecast opening balance. Все суммы остаются decimal-строками.
+- Threat matrix покрывает IDOR/cross-tenant, brute force/rate limits, CSRF/CORS, session
+  fixation/replay, SQL/prompt injection, CSV formulas, upload/export boundary и log/LLM
+  redaction. Принятых High/Critical исключений нет.
+- API публикует JSON logs, безопасные request/correlation IDs, low-cardinality metrics,
+  liveness и readiness DB/job/provider. Worker завершает текущий tick по signal, а lease replay
+  остаётся idempotent; API имеет явное 30-секундное graceful window и закрывает DB pools.
+- PostgreSQL backup/restore scripts для PowerShell/POSIX проверяют archive, запрещают overwrite и
+  restore в source/non-empty DB. Drill сравнивает revision, counts, row digests, postings и
+  ledger balance в отдельной восстановленной database.
+- CI блокирует High/Critical dependency/container findings, secrets, misconfiguration и
+  restricted/forbidden licenses; CycloneDX SBOM и полный license JSON сохраняются как artifacts.
+  Runtime images переведены на pinned Alpine 3.23, собираются non-root и не содержат npm в web.
+- На 10 000 posted transactions подтверждены существующие owner/date index и `<= 5 SELECT`;
+  неподтверждённых cache/summary-table оптимизаций не добавлено.
+
+## Проверки этапа 12
+
+- System E2E: `7 passed` за `56.2 s` с реальными API/PostgreSQL/fake-provider; failure-only
+  artifacts настроены в Playwright и CI.
+- Backend: `124 passed` за `39.34 s`, coverage `86.93%`; Ruff, strict mypy, Poetry lock,
+  OpenAPI/generated client drift и migration checks зелёные.
+- Frontend: `40 passed` за `15.64 s`, statements coverage `92.80%`; ESLint, Prettier,
+  TypeScript и production build зелёные.
+- Performance: regression dataset `10 000` transactions прошёл за `5.26 s`; query plan не
+  использовал sequential scan/temp I/O и остался в установленном statement budget.
+- Restore drill: реальный custom-format backup был восстановлен в отдельную database; exact
+  verification прошёл, observed local backup+restore+verify `~17 s`, Alembic revision
+  `20261014_0010 (head)` и metadata drift check зелёные.
+- Security: оба lockfile scans и итоговые backend/web image scans Trivy `0.76.0` показали
+  `0 High/Critical` и `0 secrets`; Dockerfile misconfiguration scan также чистый.
 
 ## Готово в этапе 11
 
@@ -291,3 +329,4 @@
 | 09 LLM Advice | завершён | `feat(09): add private provider-neutral financial advice` | 109 backend / 87.01%, fake provider matrix, 8 frontend tests; RTX 3050 local vLLM tested |
 | 10 Frontend Foundation | завершён | `feat(10): build accessible application foundation` | 28 component/integration, 2 Playwright; lint/typecheck/build, a11y/responsive baseline |
 | 11 Finance UI | завершён | `feat(11): deliver complete financial workflows` | 39 component/integration, 13 Playwright; lint/typecheck/build, responsive/a11y smoke |
+| 12 E2E & Hardening | завершён | `test(12): harden end-to-end product behavior` | 7 system E2E, 124 backend, 40 frontend; restore/performance/security/container gates |

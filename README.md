@@ -1,6 +1,6 @@
 # Financial Analytics
 
-Local-first приложение для учёта личных финансов. Этапы 05–09 дают idempotent ledger API для
+Local-first приложение для учёта личных финансов. Этапы 05–12 дают idempotent ledger API для
 accounts, categories, income/expense/transfer/adjustment/reversal, stable cursor pagination,
 UTF-8 CSV export, recurring rules, deposits, reconciled analytics, детерминированные forecasts,
 versioned scenarios, numeric goal plans и необязательный provider-neutral LLM-советник.
@@ -33,7 +33,8 @@ placeholder.
 - web: <http://localhost:4173>;
 - API docs: <http://localhost:8000/docs>;
 - liveness: <http://localhost:8000/health/live>;
-- readiness: <http://localhost:8000/health/ready>.
+- readiness: <http://localhost:8000/health/ready>;
+- Prometheus metrics: <http://localhost:8000/metrics>.
 
 Первый мастер создаётся один раз через `POST /api/v1/auth/bootstrap`; контракт доступен в
 `/docs`. Задайте email, пароль длиной от 12 символов, базовую валюту, locale и IANA timezone.
@@ -42,8 +43,9 @@ placeholder.
 процедуры ротации описаны в [docs/SECURITY.md](docs/SECURITY.md).
 
 `/health/live` сообщает о работе процесса. `/health/ready` возвращает `200` только после
-успешного `SELECT 1` в PostgreSQL; при недоступности БД API продолжает стартовать и возвращает
-единый `503 application/problem+json`.
+проверки PostgreSQL и durable job store и отдельно показывает optional provider; при
+недоступности обязательной зависимости API возвращает единый `503 application/problem+json`.
+`/metrics` не содержит route, tenant или финансовых labels.
 
 LLM по умолчанию выключена (`LLM_PROVIDER=disabled`) и не участвует ни в startup, ни в
 readiness. Локальный vLLM запускается только явно:
@@ -180,6 +182,11 @@ pnpm test:e2e:install
 pnpm test:e2e
 ```
 
+Семь продуктовых сценариев используют реальный API и отдельную PostgreSQL database с именем,
+оканчивающимся на `_e2e`. Подготовка environment и команда `pnpm test:e2e:system` описаны в
+[docs/HARDENING.md](docs/HARDENING.md). Trace, screenshot и video сохраняются только для
+failure.
+
 На Windows smoke по умолчанию использует установленный stable Chrome, чтобы browser process
 не зависел от ограничений запуска из пользовательского `AppData`; на Linux используется
 закреплённый Playwright Chromium. Канал можно явно переопределить переменной
@@ -211,6 +218,9 @@ integration tests и downgrade до пустого bootstrap revision. Полн�
 [docs/SCHEDULING_RUNBOOK.md](docs/SCHEDULING_RUNBOOK.md), формулы вкладов — в
 [docs/DEPOSIT_CALCULATIONS.md](docs/DEPOSIT_CALCULATIONS.md). Security model — в
 [docs/SECURITY.md](docs/SECURITY.md), LLM boundary — в [docs/LLM.md](docs/LLM.md).
+Backup/restore drill и RPO/RTO assumptions — в
+[docs/BACKUP_AND_RECOVERY.md](docs/BACKUP_AND_RECOVERY.md), E2E/threat/scanner gate — в
+[docs/HARDENING.md](docs/HARDENING.md).
 
 ## Структура
 

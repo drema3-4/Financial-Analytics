@@ -405,7 +405,7 @@ def create_account(
     authenticated: MutatingSession,
     idempotency_key: IdempotencyKey,
 ) -> AccountResponse:
-    occurred_at = payload.opening_balance_occurred_at or datetime.now(UTC)
+    occurred_at = payload.opening_balance_occurred_at or request.app.state.clock().value
     account = _service(request).create_account(
         owner_id=authenticated.profile.id,
         actor_id=authenticated.profile.id,
@@ -1033,6 +1033,6 @@ def _require_aware(value: datetime | None, field: str) -> None:
 
 
 def _csv_safe(value: str) -> str:
-    if value.startswith(("=", "+", "-", "@", "\t", "\r")):
+    if value.lstrip(" \t\r\n\ufeff").startswith(("=", "+", "-", "@")):
         return "'" + value
     return value

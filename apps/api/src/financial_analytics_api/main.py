@@ -17,6 +17,8 @@ from financial_analytics_api.identity import router as identity_router
 from financial_analytics_api.ledger import router as ledger_router
 from financial_analytics_api.logging import configure_logging
 from financial_analytics_api.middleware import RequestContextMiddleware
+from financial_analytics_api.observability import MetricsRegistry
+from financial_analytics_api.observability import router as observability_router
 from financial_analytics_api.scheduling import router as scheduling_router
 from financial_analytics_app.advice import AdviceService, DisabledAdviceProvider
 from financial_analytics_app.analytics import AnalyticsService
@@ -26,8 +28,9 @@ from financial_analytics_app.identity import AuthService
 from financial_analytics_app.ledger import LedgerService
 from financial_analytics_app.ports import AdviceProvider, AdviceProviderCapabilities
 from financial_analytics_app.scheduling import SchedulingService
+from financial_analytics_domain import Instant
 from financial_analytics_infra.advice import OpenAICompatibleAdviceProvider
-from financial_analytics_infra.database import Database
+from financial_analytics_infra.database import Database, JobQueueSnapshot
 from financial_analytics_infra.identity import PostgresIdentityStore
 from financial_analytics_infra.repositories import PostgresUnitOfWorkFactory
 from financial_analytics_infra.scheduling import PostgresSchedulingRepository
@@ -56,6 +59,10 @@ def create_app(
     configure_logging(resolved_settings.log_level)
     database: Database | None = None
     identity_store: PostgresIdentityStore | None = None
+    fixed_clock = resolved_settings.test_clock_at
+
+    def clock() -> Instant:
+        return Instant.now() if fixed_clock is None else Instant(fixed_clock)
 
     if auth_service is None:
         identity_store = PostgresIdentityStore(resolved_settings.database_url)
@@ -65,6 +72,7 @@ def create_app(
             HmacSecretProvider(resolved_settings.session_secret),
             HmacSecretProvider(resolved_settings.csrf_secret),
             InMemorySlidingWindowRateLimiter(),
+            clock=clock,
         )
 
     if (
@@ -79,23 +87,27 @@ def create_app(
 
     if ledger_service is None:
         assert database is not None
-        ledger_service = LedgerService(PostgresUnitOfWorkFactory(database.engine))
+        ledger_service = LedgerService(PostgresUnitOfWorkFactory(database.engine), clock=clock)
 
     if scheduling_service is None:
         assert database is not None
-        scheduling_service = SchedulingService(PostgresSchedulingRepository(database.engine))
+        scheduling_service = SchedulingService(
+            PostgresSchedulingRepository(database.engine), clock=clock
+        )
 
     if deposit_service is None:
         assert database is not None
-        deposit_service = DepositService(PostgresUnitOfWorkFactory(database.engine))
+        deposit_service = DepositService(PostgresUnitOfWorkFactory(database.engine), clock=clock)
 
     if analytics_service is None:
         assert database is not None
-        analytics_service = AnalyticsService(PostgresUnitOfWorkFactory(database.engine))
+        analytics_service = AnalyticsService(
+            PostgresUnitOfWorkFactory(database.engine), clock=clock
+        )
 
     if forecast_service is None:
         assert database is not None
-        forecast_service = ForecastService(PostgresUnitOfWorkFactory(database.engine))
+        forecast_service = ForecastService(PostgresUnitOfWorkFactory(database.engine), clock=clock)
 
     if advice_service is None:
         advice_provider: AdviceProvider
@@ -124,6 +136,7 @@ def create_app(
             max_tokens=resolved_settings.llm_max_tokens,
         )
 
+    job_readiness_check: ReadinessCheck
     if readiness_check is None:
 
         async def database_readiness_check() -> bool:
@@ -131,6 +144,24 @@ def create_app(
             return await anyio.to_thread.run_sync(database.ping)
 
         readiness_check = database_readiness_check
+
+        async def database_job_readiness_check() -> bool:
+            assert database is not None
+            try:
+                await anyio.to_thread.run_sync(database.job_queue_snapshot)
+            except Exception:
+                return False
+            return True
+
+        job_readiness_check = database_job_readiness_check
+
+    else:
+        job_readiness_check = readiness_check
+
+    def job_snapshot() -> JobQueueSnapshot:
+        if database is None:
+            return JobQueueSnapshot(0, 0, 0)
+        return database.job_queue_snapshot()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -146,7 +177,11 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.settings = resolved_settings
+    app.state.clock = clock
     app.state.readiness_check = readiness_check
+    app.state.job_readiness_check = job_readiness_check
+    app.state.job_snapshot = job_snapshot
+    app.state.metrics = MetricsRegistry()
     app.state.auth_service = auth_service
     app.state.ledger_service = ledger_service
     app.state.scheduling_service = scheduling_service
@@ -172,6 +207,7 @@ def create_app(
     app.add_middleware(RequestContextMiddleware)
     install_error_handlers(app)
     app.include_router(health_router)
+    app.include_router(observability_router)
     app.include_router(identity_router)
     app.include_router(ledger_router)
     app.include_router(scheduling_router)

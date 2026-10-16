@@ -1,9 +1,22 @@
-# API contract through milestone 09
+# API contract through milestone 12
 
 FastAPI публикует актуальную OpenAPI-схему по `/openapi.json` и интерактивную документацию
 по `/docs`. Зафиксированный snapshot находится в `docs/openapi.json`; из него
 детерминированно строится TypeScript fetch-client в
 `packages/frontend/api/src/generated/client.ts`.
+
+## Operational endpoints
+
+- `GET /health/live` proves only that the API process can serve a request.
+- `GET /health/ready` requires PostgreSQL and the durable job store; it also reports the optional
+  advice provider as `configured` or `disabled` without making LLM a core dependency.
+- `GET /metrics` emits Prometheus text with HTTP method/status class, aggregate duration,
+  readiness, queue-state counts and provider state. It has no path, tenant, user, account,
+  transaction, email or correlation label.
+
+Every API response carries a safe request/correlation ID, `Cache-Control: no-store`,
+`X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. Bodies, cookies, tokens and
+financial values are not request-log fields.
 
 ## Identity
 

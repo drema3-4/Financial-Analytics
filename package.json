@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "test": "vitest run --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:system": "node scripts/run-system-e2e.mjs",
     "test:e2e:install": "playwright install --no-shell chromium",
     "typecheck": "tsc --build"
   },

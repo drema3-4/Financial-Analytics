@@ -88,6 +88,27 @@ describe("financial workspace", () => {
     expect(await screen.findByRole("heading", { name: heading, level: 1 })).toBeInTheDocument();
   });
 
+  it("offers deterministic advice input when the provider is configured", async () => {
+    renderRoute(
+      "/app/advice",
+      api({
+        getAdviceProviderStatus: () =>
+          Promise.resolve({
+            status: "configured",
+            provider: "openai_compatible",
+            model: "deterministic-test-provider",
+            endpoint_scope: "local",
+            capabilities: { json_schema: true, system_messages: true, non_thinking: true },
+            prompt_version: "v1",
+            context_version: "v1",
+          }),
+      }),
+    );
+
+    expect(await screen.findByLabelText("Вопрос (необязательно)")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Советник недоступен" })).not.toBeInTheDocument();
+  });
+
   it("creates an expense with an exact decimal string and server-owned result", async () => {
     const createOperation = vi.fn(() => Promise.resolve({ id: "tx" } as never));
     const financeApi = api({

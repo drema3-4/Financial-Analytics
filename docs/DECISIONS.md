@@ -382,3 +382,48 @@ generated client и по-прежнему единолично отвечает 
 а read-after-write сохраняет сервер единственным источником финансовой истины. Отказ от
 optimistic financial updates важнее субъективной скорости, поскольку последствия сторно,
 графики вкладов, агрегаты и goal feasibility зависят от доменных правил backend.
+
+## ADR-021: системный E2E-контур и безопасная наблюдаемость
+
+**Дата:** 2026-10-16.
+
+**Решение:** семь сценариев `SPEC.md` проходят в отдельном Playwright project через
+реальные browser, FastAPI и PostgreSQL. Каждый тест получает пустую БД и fixed UTC clock;
+сброс разрешён только в `APP_ENV=test` и только для database name с суффиксом `_e2e`.
+Ни test-only HTTP endpoint, ни производственный bypass аутентификации не добавляются. Быстрые
+route-mocked UI smoke остаются отдельным слоем, но не считаются продуктовой E2E-приёмкой.
+
+Наблюдаемость не переносит финансовые данные в новую систему. JSON-логи и Prometheus text
+метрики имеют только bounded low-cardinality labels: method, status class и состояние задания.
+URL/path, owner/account/transaction ID, email, body, cookie и provider payload не попадают в
+labels или logs.
+Readiness требует БД и job store; optional LLM публикует состояние, но не блокирует core.
+Worker завершает текущий синхронный tick после SIGTERM/SIGINT и не берёт новую lease.
+
+PostgreSQL backup и restore используют custom-format `pg_dump`/`pg_restore`. Restore всегда
+идёт в отдельную предварительно пустую БД; script отказывается восстанавливать в source DB.
+Факт restore доказывает CI drill: schema version, row counts, ledger balance и immutable
+postings до и после restore сравниваются.
+
+**Почему:** fixed clock и новая БД на сценарий убирают порядок тестов и wall-clock из
+результата, а реальный HTTP/DB path ловит ошибки, которые невидимы в route mocks. Ограниченные
+labels дают эксплуатационный сигнал без второго канала утечки. Отдельная restore DB делает
+drill проверкой резервной копии, а не её наличия на диске.
+
+## ADR-022: минимальные Alpine runtime images как security boundary
+
+**Дата:** 2026-10-16.
+
+**Решение:** backend и web images переходят с Debian Bookworm на официальные pinned
+Alpine 3.23 variants тех же Python 3.12.12 и Node.js 24.21.0. Во время сборки применяются
+доступные security updates из зафиксированной Alpine-ветки. Web runtime удаляет bundled
+`npm`, `npx` и `corepack`: production server использует только `node` и стандартную библиотеку,
+а package manager нужен только в builder stage. CI сканирует итоговые runtime images и
+блокирует любую High/Critical vulnerability без `ignore-unfixed` или baseline-исключений.
+
+**Почему:** актуальные официальные Bookworm и Trixie variants на дату проверки сохраняли
+High/Critical findings в системных пакетах, включая находки без доступного исправления.
+Alpine variants имели только исправляемые package findings; обновление packages устраняет их,
+а удаление неиспользуемого npm уменьшает web runtime и исключает его dependency tree из
+production attack surface. Дистрибутив builder и runtime одинаков, поэтому собранные native
+wheels не пересекают glibc/musl boundary.

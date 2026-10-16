@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import cast
 
 from sqlalchemy import Engine, MetaData, create_engine, text
@@ -20,6 +21,13 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
+@dataclass(frozen=True, slots=True)
+class JobQueueSnapshot:
+    pending: int
+    leased: int
+    dead_letter: int
+
+
 class Database:
     """Small SQLAlchemy lifecycle and readiness adapter."""
 
@@ -37,6 +45,26 @@ class Database:
                 return result == 1
         except Exception:
             return False
+
+    def job_queue_snapshot(self) -> JobQueueSnapshot:
+        """Return bounded operational counts without tenant or payload data."""
+
+        statement = text(
+            """
+            SELECT
+              count(*) FILTER (WHERE state = 'pending') AS pending,
+              count(*) FILTER (WHERE state = 'leased') AS leased,
+              count(*) FILTER (WHERE state = 'dead_letter') AS dead_letter
+            FROM outbox_jobs
+            """
+        )
+        with self._engine.connect() as connection:
+            row = connection.execute(statement).one()
+        return JobQueueSnapshot(
+            pending=int(row.pending),
+            leased=int(row.leased),
+            dead_letter=int(row.dead_letter),
+        )
 
     @property
     def engine(self) -> Engine:

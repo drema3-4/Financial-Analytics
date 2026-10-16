@@ -16,6 +16,8 @@ class LivenessResponse(BaseModel):
 
 class ReadinessChecks(BaseModel):
     database: Literal["up"] = "up"
+    jobs: Literal["up"] = "up"
+    provider: Literal["configured", "disabled"]
 
 
 class ReadinessResponse(BaseModel):
@@ -47,4 +49,7 @@ async def live() -> LivenessResponse:
 async def ready(request: Request) -> ReadinessResponse:
     if not await request.app.state.readiness_check():
         raise DependencyUnavailableError
-    return ReadinessResponse(checks=ReadinessChecks())
+    if not await request.app.state.job_readiness_check():
+        raise DependencyUnavailableError
+    provider = request.app.state.advice_service.provider_outcome().status.value
+    return ReadinessResponse(checks=ReadinessChecks(provider=provider))

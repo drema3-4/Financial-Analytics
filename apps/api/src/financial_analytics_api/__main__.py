@@ -11,6 +11,7 @@ def main() -> None:
         proxy_headers=False,
         access_log=False,
         log_config=None,
+        timeout_graceful_shutdown=30,
     )
 
 
