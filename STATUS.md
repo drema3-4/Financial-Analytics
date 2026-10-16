@@ -4,18 +4,51 @@
 
 ## Текущее состояние
 
-- Стадия: завершён `10 — Frontend Foundation`; адаптивный React shell, session boundary,
-  login и полный onboarding до первого счёта реализованы.
-- Реализация: сгенерированный API client скрыт за browser gateway с CSRF/refresh/idempotency;
-  onboarding создаёт master-профиль, locale/timezone/валюту и первый счёт с точной строковой
-  суммой. Responsive shell, route/error boundaries и loading/empty/error/session-expired
-  состояния работают от 360 px с keyboard/focus/reduced-motion baseline.
-- Следующий этап: `11 — Finance UI`; не начат и требует отдельного явного запроса.
+- Стадия: завершён `11 — Finance UI`; все пользовательские сценарии существующего финансового
+  API доступны через адаптивный интерфейс.
+- Реализация: TanStack Query единообразно управляет server state без optimistic financial
+  truth; dashboard, ledger journal, recurring rules, deposits, analytics, forecast/goals и
+  advice показывают server-derived данные, freshness, timezone, currency и privacy boundaries.
+- Следующий этап: `12 — E2E & Hardening`; не начат и требует отдельного явного запроса.
 - Host global toolchain из снимка этапа 00 всё ещё может отличаться от baseline; repository
   gate подтверждён в Python 3.12.12 environment, pnpm 12.12.1 и закреплённых containers.
 - LLM не входит в core startup. Compose profile `local-llm` и `Qwen/Qwen3-4B-AWQ` **tested**
   на RTX 3050 6 ГБ: context 2048, одна sequence, GPU reserve `0.80`, non-thinking smoke,
   VRAM/latency и полный strict-schema adapter round-trip подтверждены; детали в `docs/LLM.md`.
+
+## Готово в этапе 11
+
+- Dashboard показывает net worth, cash flow, income/expense, ближайшие активные recurring
+  obligations, progress целей, счета и явный `data_through`; multi-currency данные не
+  объединяются и сопровождаются предупреждением об отсутствии FX.
+- Accounts/categories и transaction journal закрывают создание income/expense/transfer,
+  category/group management, search/filters, cursor pagination, CSV export и append-only
+  reversal с явным подтверждением последствий.
+- Recurring UI создаёт правила, получает server preview, показывает local/UTC и IANA timezone,
+  missing-day policy, next occurrence и pause/resume без optimistic state.
+- Deposits включают terms/rate period/tax/capitalization форму, cashflow/withdrawal и actual
+  interest ввод, server schedule, planned-vs-actual reconciliation и объяснение yield.
+- Analytics содержит server-derived metrics, deterministic anomalies, period comparison,
+  currency warnings, SVG overview и полную табличную альтернативу.
+- Forecast editor показывает assumptions, month timeline, uncertainty/disclaimer и compare;
+  goals показывают required contribution, contribution gap, shortfall, completion и явную
+  priority strategy.
+- Advice показывает provider status, request-scoped privacy consent, evidence anchors,
+  confidence и disclaimer; suggestions не оформлены как команды или гарантии.
+- Browser gateway расширен всеми существующими finance endpoints. Decimal money/rates идут в
+  wire contract строками; JS number используется только для несмысловой геометрии SVG/progress.
+  ADR-020 и `docs/UI.md` фиксируют server-state/read-after-write и accessibility правила.
+
+## Проверки этапа 11
+
+- Frontend: ESLint, Prettier, strict TypeScript и production build — зелёные.
+- Component/integration: `39 passed`; coverage `92.80%` statements, `84.33%` branches,
+  `92.45%` functions и `93.47%` lines, включая route smoke каждого финансового модуля,
+  exact decimal operation payload и безопасное отображение API error.
+- Playwright Chrome: `13 passed` — onboarding/login, responsive smoke всех восьми финансовых
+  модулей, transaction API negative flow, invalid deposit term и disabled advice fallback.
+- Keyboard/native semantics, focus baseline, screen-reader headings/labels/table alternatives и
+  отсутствие horizontal overflow проверены component/Playwright smoke.
 
 ## Готово в этапе 10
 
@@ -257,3 +290,4 @@
 | 08 Forecast & Goals | завершён | `feat(08): forecast finances and plan goals` | 93 backend tests, 86.74%, golden/property/integration/contract, 8 frontend tests |
 | 09 LLM Advice | завершён | `feat(09): add private provider-neutral financial advice` | 109 backend / 87.01%, fake provider matrix, 8 frontend tests; RTX 3050 local vLLM tested |
 | 10 Frontend Foundation | завершён | `feat(10): build accessible application foundation` | 28 component/integration, 2 Playwright; lint/typecheck/build, a11y/responsive baseline |
+| 11 Finance UI | завершён | `feat(11): deliver complete financial workflows` | 39 component/integration, 13 Playwright; lint/typecheck/build, responsive/a11y smoke |

@@ -34,9 +34,43 @@ function fakeApi(overrides: Partial<FinanceApi> = {}): FinanceApi {
     login: () => Promise.resolve(profile),
     listAccounts: () => Promise.resolve([account]),
     createAccount: () => Promise.resolve(account),
+    getDashboard: () =>
+      Promise.resolve({
+        period: {
+          start: "2026-10-01",
+          end: "2026-10-31",
+          timezone: "Europe/Saratov",
+          granularity: "month",
+          start_at: "2026-09-30T20:00:00Z",
+          end_at: "2026-10-31T20:00:00Z",
+        },
+        data_through: "2026-10-16T08:00:00Z",
+        currency_mode: "single",
+        combined_currency: "RUB",
+        totals: [],
+        comparison: {
+          current_start: "2026-10-01",
+          current_end: "2026-10-31",
+          previous_start: "2026-09-01",
+          previous_end: "2026-09-30",
+          current_is_complete: false,
+          currencies: [],
+        },
+        anomaly_policy: {
+          version: "v1",
+          baseline_buckets: 3,
+          minimum_buckets: 3,
+          baseline_statistic: "median",
+          threshold_formula: "deterministic",
+          incomplete_buckets_evaluated: false,
+        },
+        anomalies: [],
+      }),
+    listRecurringRules: () => Promise.resolve([]),
+    listFinancialGoals: () => Promise.resolve([]),
     logout: () => Promise.resolve(),
     ...overrides,
-  };
+  } as FinanceApi;
 }
 
 describe("App routes", () => {
@@ -56,7 +90,7 @@ describe("App routes", () => {
     await user.type(screen.getByLabelText("Пароль"), "correct horse battery staple");
     await user.click(screen.getByRole("button", { name: "Войти" }));
 
-    expect(await screen.findByRole("heading", { name: "Добро пожаловать." })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Финансовый обзор" })).toBeInTheDocument();
     expect(screen.getAllByText(/125.000,50.RUB/u).length).toBeGreaterThan(0);
     expect(login).toHaveBeenCalledWith({
       email: "owner@example.com",
@@ -103,7 +137,7 @@ describe("App routes", () => {
     await user.type(screen.getByLabelText("Дата остатка"), "2026-10-14");
     await user.click(screen.getByRole("button", { name: "Создать счёт и открыть обзор" }));
 
-    expect(await screen.findByRole("heading", { name: "Добро пожаловать." })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Финансовый обзор" })).toBeInTheDocument();
     expect(bootstrapMaster).toHaveBeenCalledWith({
       email: "owner@example.com",
       password: "correct horse battery staple",
@@ -226,7 +260,7 @@ describe("App routes", () => {
 
     expect(await screen.findByRole("heading", { name: "Страница не найдена" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Попробовать снова" }));
-    expect(await screen.findByRole("heading", { name: "Добро пожаловать." })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Финансовый обзор" })).toBeInTheDocument();
     expect(screen.getAllByText(/−100.RUB/u).length).toBeGreaterThan(0);
     expect(screen.getAllByText("brokerage").length).toBeGreaterThan(0);
 

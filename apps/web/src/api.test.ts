@@ -117,6 +117,195 @@ describe("BrowserFinanceApi", () => {
     expect(logout).toHaveBeenCalledWith({ xCSRFToken: "csrf-value" });
   });
 
+  it("routes every finance workflow through the generated client boundary", async () => {
+    const client = new FinancialAnalyticsClient("http://api.test");
+    const result = {} as never;
+    const list = [] as never;
+    vi.spyOn(client, "getAnalyticsDashboard").mockResolvedValue(result);
+    vi.spyOn(client, "listCategoryGroups").mockResolvedValue(list);
+    vi.spyOn(client, "createCategoryGroup").mockResolvedValue(result);
+    vi.spyOn(client, "listCategories").mockResolvedValue(list);
+    vi.spyOn(client, "createCategory").mockResolvedValue(result);
+    vi.spyOn(client, "listTransactions").mockResolvedValue(result);
+    vi.spyOn(client, "createIncome").mockResolvedValue(result);
+    vi.spyOn(client, "createExpense").mockResolvedValue(result);
+    vi.spyOn(client, "createTransfer").mockResolvedValue(result);
+    vi.spyOn(client, "createAdjustment").mockResolvedValue(result);
+    vi.spyOn(client, "reverseTransaction").mockResolvedValue(result);
+    vi.spyOn(client, "exportTransactionsCsv").mockResolvedValue("csv");
+    vi.spyOn(client, "listRecurringRules").mockResolvedValue(list);
+    vi.spyOn(client, "previewRecurringOccurrences").mockResolvedValue(list);
+    vi.spyOn(client, "createRecurringRule").mockResolvedValue(result);
+    vi.spyOn(client, "pauseRecurringRule").mockResolvedValue(result);
+    vi.spyOn(client, "resumeRecurringRule").mockResolvedValue(result);
+    vi.spyOn(client, "listDeposits").mockResolvedValue(list);
+    vi.spyOn(client, "createDeposit").mockResolvedValue(result);
+    vi.spyOn(client, "getDepositValuation").mockResolvedValue(result);
+    vi.spyOn(client, "recordDepositCashflow").mockResolvedValue(result);
+    vi.spyOn(client, "recordDepositInterest").mockResolvedValue(result);
+    vi.spyOn(client, "getFinancialReport").mockResolvedValue(result);
+    vi.spyOn(client, "listForecastScenarios").mockResolvedValue(list);
+    vi.spyOn(client, "createForecastScenario").mockResolvedValue(result);
+    vi.spyOn(client, "getForecast").mockResolvedValue(result);
+    vi.spyOn(client, "compareForecastScenarios").mockResolvedValue(result);
+    vi.spyOn(client, "listFinancialGoals").mockResolvedValue(list);
+    vi.spyOn(client, "createFinancialGoal").mockResolvedValue(result);
+    vi.spyOn(client, "getAdviceProviderStatus").mockResolvedValue(result);
+    vi.spyOn(client, "generateFinancialAdvice").mockResolvedValue(result);
+    const api = new BrowserFinanceApi(client, () => "fa_csrf=csrf");
+    const money = { amount: "10.00", currency: "RUB" };
+    const operation = {
+      account_id: account.id,
+      category_id: "category",
+      money,
+      occurred_at: "2026-10-16T08:00:00Z",
+    };
+
+    await Promise.all([
+      api.getDashboard(),
+      api.listCategoryGroups(),
+      api.createCategoryGroup({ name: "Быт" }),
+      api.listCategories(),
+      api.createCategory({ name: "Продукты", kind: "expense" }),
+      api.listTransactions({ search: "кофе" }),
+      api.createOperation("income", operation),
+      api.createOperation("expense", operation),
+      api.createTransfer({
+        source_account_id: account.id,
+        destination_account_id: "other",
+        money,
+        occurred_at: operation.occurred_at,
+      }),
+      api.createAdjustment({
+        account_id: account.id,
+        money,
+        occurred_at: operation.occurred_at,
+        description: "reconcile",
+      }),
+      api.reverseTransaction("transaction", {
+        occurred_at: operation.occurred_at,
+        reason: "duplicate",
+      }),
+      api.exportTransactions({ kind: "expense" }),
+      api.listRecurringRules(),
+      api.previewRecurringOccurrences({
+        frequency: "monthly",
+        starts_on: "2026-10-16",
+        local_time: "09:00",
+        timezone: "Europe/Saratov",
+      }),
+      api.createRecurringRule({
+        frequency: "monthly",
+        starts_on: "2026-10-16",
+        local_time: "09:00",
+        timezone: "Europe/Saratov",
+        operation: { kind: "expense", account_id: account.id, category_id: "category", money },
+      }),
+      api.setRecurringRulePaused(
+        {
+          id: "rule",
+          operation: {
+            kind: "expense",
+            account_id: account.id,
+            destination_account_id: null,
+            category_id: "category",
+            money,
+            description: "",
+            tag_ids: [],
+          },
+          frequency: "monthly",
+          starts_on: "2026-10-16",
+          local_time: "09:00",
+          timezone: "Europe/Saratov",
+          missing_day_policy: "last_day",
+          catch_up_policy: "all",
+          end_date: null,
+          next_occurrence_at: null,
+          status: "active",
+          version: 1,
+        },
+        true,
+      ),
+      api.setRecurringRulePaused(
+        {
+          id: "rule",
+          operation: {
+            kind: "expense",
+            account_id: account.id,
+            destination_account_id: null,
+            category_id: "category",
+            money,
+            description: "",
+            tag_ids: [],
+          },
+          frequency: "monthly",
+          starts_on: "2026-10-16",
+          local_time: "09:00",
+          timezone: "Europe/Saratov",
+          missing_day_policy: "last_day",
+          catch_up_policy: "all",
+          end_date: null,
+          next_occurrence_at: null,
+          status: "paused",
+          version: 2,
+        },
+        false,
+      ),
+      api.listDeposits(),
+      api.createDeposit({
+        principal_account_id: account.id,
+        currency: "RUB",
+        opened_on: "2026-10-16",
+        matures_on: "2027-10-16",
+        rate_periods: [
+          { starts_on: "2026-10-16", ends_on: "2027-10-16", nominal_rate: { value: "0.1" } },
+        ],
+        capitalization_frequency: "monthly_calendar_end",
+        day_count_convention: "actual_365_fixed",
+        rounding_policy: "half_even",
+        interest_rounding_frequency: "capitalization",
+        timezone: "Europe/Saratov",
+        cashflow_cutoff_time: "23:59:59",
+        cashflow_cutoff_inclusive: true,
+        early_close_rule: { policy: "forfeit_interest", nominal_rate: null },
+        tax_rate: { value: "0" },
+      }),
+      api.getDepositValuation("deposit", "2026-10-16"),
+      api.recordDepositCashflow("deposit", {
+        counterparty_account_id: account.id,
+        money,
+        occurred_at: operation.occurred_at,
+        description: "top up",
+      }),
+      api.recordDepositInterest("deposit", {
+        money,
+        occurred_at: operation.occurred_at,
+        description: "actual",
+      }),
+      api.getFinancialReport("2026-10-01", "2026-10-16", "month"),
+      api.listForecastScenarios(),
+      api.createForecastScenario({ name: "Plan", currency: "RUB", horizon: "2027-10-16" }),
+      api.getForecast("RUB", "2027-10-16"),
+      api.compareForecasts("RUB", "2027-10-16", ["scenario"]),
+      api.listFinancialGoals(),
+      api.createFinancialGoal({
+        name: "Reserve",
+        target: money,
+        target_date: "2027-10-16",
+        saved_amount: money,
+        priority: 1,
+      }),
+      api.getAdviceProviderStatus(),
+      api.generateAdvice({ currency: "RUB" }),
+    ]);
+
+    expect(vi.mocked(client.createIncome.bind(client))).toBeTypeOf("function");
+    expect(vi.mocked(client.createExpense.bind(client))).toBeTypeOf("function");
+    expect(vi.mocked(client.pauseRecurringRule.bind(client))).toBeTypeOf("function");
+    expect(vi.mocked(client.resumeRecurringRule.bind(client))).toBeTypeOf("function");
+    expect(vi.mocked(client.generateFinancialAdvice.bind(client))).toBeTypeOf("function");
+  });
+
   it("does not hide non-authentication transport failures", async () => {
     const profileFailureClient = new FinancialAnalyticsClient("http://api.test");
     vi.spyOn(profileFailureClient, "current_profile_api_v1_profile_get").mockRejectedValue(

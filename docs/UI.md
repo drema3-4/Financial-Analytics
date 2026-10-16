@@ -96,3 +96,17 @@ locale/timezone, создаёт master session и предлагает перв�
 session уже существует, bootstrap профиля и списка счетов направляет пользователя сразу в
 правильную точку; истёкшая session один раз обновляется через refresh cookie, после чего UI
 показывает явное сообщение и возвращает ко входу.
+
+## Финансовое рабочее пространство
+
+- Dashboard показывает server-derived capital/cash flow, обязательства, цели, счета и
+  `data_through`; multi-currency режим всегда предупреждает, что суммы без FX не объединены.
+- Journal сохраняет фильтры в query key, использует cursor pagination и подтверждает сторно
+  как новую обратную проводку с влиянием на баланс и отчёты. Физического удаления в UI нет.
+- Recurring preview показывает локальное и UTC-время, IANA timezone и явную missing-day policy.
+- Deposit valuation, analytics и forecast визуализируют только ответы API. Каждому SVG/chart
+  соответствует таблица; planned/actual, assumptions и uncertainty читаются без графика.
+- Advice отделён визуально от финансовых команд: suggestions названы вариантами, evidence
+  имеет якоря, consent действует на один запрос, confidence соседствует с disclaimer.
+- Финансовые mutation не optimistic. После ответа server соответствующие server-state queries
+  инвалидируются; pending/error остаются рядом с инициировавшей формой.

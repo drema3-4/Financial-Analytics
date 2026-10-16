@@ -32,6 +32,10 @@ test("existing user logs in and reaches the dashboard", async ({ page }) => {
       await route.fulfill({ json: profile });
     } else if (path === "/api/v1/accounts") {
       await route.fulfill({ json: [account] });
+    } else if (path === "/api/v1/analytics/dashboard") {
+      await route.fulfill({ json: dashboard });
+    } else if (path === "/api/v1/recurring-rules" || path === "/api/v1/financial-goals") {
+      await route.fulfill({ json: [] });
     } else {
       await route.fulfill({ status: 401, json: problem("invalid_session") });
     }
@@ -42,7 +46,7 @@ test("existing user logs in and reaches the dashboard", async ({ page }) => {
   await page.getByLabel("Пароль").fill("correct horse battery staple");
   await page.getByLabel("Пароль").press("Enter");
 
-  await expect(page.getByRole("heading", { name: "Добро пожаловать." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Финансовый обзор" })).toBeVisible();
   await expect(page.getByText("Основная карта").first()).toBeVisible();
   await expect(page).toHaveURL(/\/app\/dashboard$/u);
 });
@@ -67,6 +71,10 @@ test("first run creates master and an exact opening balance at 360px", async ({
       accountBody = request.postDataJSON();
       accountHeaders = request.headers();
       await route.fulfill({ status: 201, json: account });
+    } else if (path === "/api/v1/analytics/dashboard") {
+      await route.fulfill({ json: dashboard });
+    } else if (path === "/api/v1/recurring-rules" || path === "/api/v1/financial-goals") {
+      await route.fulfill({ json: [] });
     } else {
       await route.fulfill({ status: 401, json: problem("invalid_session") });
     }
@@ -91,7 +99,7 @@ test("first run creates master and an exact opening balance at 360px", async ({
   await page.getByLabel("Дата остатка").fill("2026-10-14");
   await page.getByLabel("Дата остатка").press("Enter");
 
-  await expect(page.getByRole("heading", { name: "Добро пожаловать." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Финансовый обзор" })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   assert.deepStrictEqual(bootstrapBody, {
     email: "owner@example.com",
@@ -139,3 +147,35 @@ function problem(code: string) {
     correlation_id: "correlation",
   };
 }
+
+const dashboard = {
+  period: {
+    start: "2026-10-01",
+    end: "2026-10-31",
+    timezone: "Europe/Saratov",
+    granularity: "month",
+    start_at: "2026-09-30T20:00:00Z",
+    end_at: "2026-10-31T20:00:00Z",
+  },
+  data_through: "2026-10-16T08:00:00Z",
+  currency_mode: "single",
+  combined_currency: "RUB",
+  totals: [],
+  comparison: {
+    current_start: "2026-10-01",
+    current_end: "2026-10-31",
+    previous_start: "2026-09-01",
+    previous_end: "2026-09-30",
+    current_is_complete: false,
+    currencies: [],
+  },
+  anomaly_policy: {
+    version: "v1",
+    baseline_buckets: 3,
+    minimum_buckets: 3,
+    baseline_statistic: "median",
+    threshold_formula: "deterministic",
+    incomplete_buckets_evaluated: false,
+  },
+  anomalies: [],
+};

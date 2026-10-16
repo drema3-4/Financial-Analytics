@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type SyntheticEvent,
 } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   AccountResponse,
   BootstrapRequest,
@@ -16,6 +17,7 @@ import type {
 } from "@financial-analytics/api-contracts";
 
 import { apiErrorMessage, browserFinanceApi, SessionExpiredError, type FinanceApi } from "./api";
+import { FinanceWorkspace } from "./finance/FinanceWorkspace";
 import {
   Button,
   DateControl,
@@ -27,7 +29,6 @@ import {
   localDateAtNoonUtc,
   MoneyInput,
   parseLocalizedDecimal,
-  ResponsiveDataView,
   SelectField,
   todayIsoDate,
   ToastProvider,
@@ -55,11 +56,22 @@ const accountKindLabels: Record<AccountKind, string> = {
 };
 
 export function App({ api = browserFinanceApi }: { api?: FinanceApi }) {
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { retry: false, staleTime: 30_000 },
+          mutations: { retry: false },
+        },
+      }),
+  );
   return (
     <GlobalErrorBoundary>
-      <ToastProvider>
-        <Application api={api} />
-      </ToastProvider>
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <Application api={api} />
+        </ToastProvider>
+      </QueryClientProvider>
     </GlobalErrorBoundary>
   );
 }
@@ -184,6 +196,7 @@ function Application({ api }: { api: FinanceApi }) {
   return (
     <AppShell
       navigate={navigate}
+      path={path}
       onLogout={async () => {
         try {
           await api.logout();
@@ -194,11 +207,16 @@ function Application({ api }: { api: FinanceApi }) {
       }}
       profile={state.profile}
     >
-      {path === "/app/dashboard" || path === "/" ? (
-        <Dashboard accounts={state.accounts} profile={state.profile} />
-      ) : (
-        <NotFound navigate={navigate} />
-      )}
+      <FinanceWorkspace
+        accounts={state.accounts}
+        api={api}
+        navigate={navigate}
+        onAccountsChanged={(accounts) => {
+          setState({ ...state, accounts });
+        }}
+        path={path === "/" ? "/app/dashboard" : path}
+        profile={state.profile}
+      />
     </AppShell>
   );
 }
@@ -663,11 +681,13 @@ function AppShell({
   navigate,
   onLogout,
   profile,
+  path,
 }: {
   children: ReactNode;
   navigate: Navigate;
   onLogout: () => Promise<void>;
   profile: ProfileResponse;
+  path: string;
 }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const [logoutPending, setLogoutPending] = useState(false);
@@ -694,10 +714,27 @@ function AppShell({
           </span>
         </a>
         <nav aria-label="Основная навигация" className="main-nav">
-          <RouteLink className="nav-link is-active" navigate={navigate} to="/app/dashboard">
-            <span aria-hidden="true">⌂</span>
-            Обзор
-          </RouteLink>
+          {[
+            ["/app/dashboard", "⌂", "Обзор"],
+            ["/app/accounts", "▱", "Счета"],
+            ["/app/transactions", "≡", "Операции"],
+            ["/app/recurring", "↻", "Регулярные"],
+            ["/app/deposits", "◇", "Вклады"],
+            ["/app/analytics", "⌁", "Аналитика"],
+            ["/app/forecast", "↗", "Прогноз"],
+            ["/app/goals", "◎", "Цели"],
+            ["/app/advice", "✦", "Советник"],
+          ].map(([to, icon, label]) => (
+            <RouteLink
+              className={`nav-link ${path === to ? "is-active" : ""}`}
+              key={to}
+              navigate={navigate}
+              to={to ?? "/app/dashboard"}
+            >
+              <span aria-hidden="true">{icon}</span>
+              {label}
+            </RouteLink>
+          ))}
         </nav>
         <button
           className="profile-button"
@@ -743,9 +780,29 @@ function AppShell({
         {children}
       </main>
       <nav aria-label="Навигация на мобильном" className="mobile-nav">
-        <RouteLink className="mobile-nav__link is-active" navigate={navigate} to="/app/dashboard">
+        <RouteLink
+          className={`mobile-nav__link ${path === "/app/dashboard" ? "is-active" : ""}`}
+          navigate={navigate}
+          to="/app/dashboard"
+        >
           <span aria-hidden="true">⌂</span>
           Обзор
+        </RouteLink>
+        <RouteLink
+          className={`mobile-nav__link ${path === "/app/transactions" ? "is-active" : ""}`}
+          navigate={navigate}
+          to="/app/transactions"
+        >
+          <span aria-hidden="true">≡</span>
+          Операции
+        </RouteLink>
+        <RouteLink
+          className={`mobile-nav__link ${path === "/app/analytics" ? "is-active" : ""}`}
+          navigate={navigate}
+          to="/app/analytics"
+        >
+          <span aria-hidden="true">⌁</span>
+          Аналитика
         </RouteLink>
         <button
           className="mobile-nav__link"
@@ -799,77 +856,6 @@ function AppShell({
           Выйти
         </Button>
       </Dialog>
-    </div>
-  );
-}
-
-function Dashboard({
-  accounts,
-  profile,
-}: {
-  accounts: AccountResponse[];
-  profile: ProfileResponse;
-}) {
-  return (
-    <div className="dashboard">
-      <header className="page-heading">
-        <div>
-          <p className="eyebrow">Обзор · {profile.base_currency}</p>
-          <h1>Добро пожаловать.</h1>
-          <p className="lede">
-            Основа готова. Все будущие показатели будут собираться из проводок.
-          </p>
-        </div>
-        <div className="date-stamp">
-          <span>Часовой пояс</span>
-          <strong>{profile.timezone}</strong>
-        </div>
-      </header>
-      <section className="account-section" aria-labelledby="accounts-title">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Активы</p>
-            <h2 id="accounts-title">Ваши счета</h2>
-          </div>
-          <span className="count-badge">{accounts.length}</span>
-        </div>
-        <ResponsiveDataView
-          caption="Счета и текущие остатки"
-          columns={[
-            {
-              key: "name",
-              label: "Счёт",
-              render: (account) => (
-                <span className="account-name">
-                  <span aria-hidden="true">{account.kind === "cash" ? "◇" : "▱"}</span>
-                  {account.name}
-                </span>
-              ),
-            },
-            {
-              key: "kind",
-              label: "Тип",
-              render: (account) => accountKindLabel(account.kind),
-            },
-            {
-              key: "balance",
-              label: "Остаток",
-              numeric: true,
-              render: (account) =>
-                formatMoney(account.balance.amount, account.balance.currency, profile.locale),
-            },
-          ]}
-          getKey={(account) => account.id}
-          rows={accounts}
-        />
-      </section>
-      <aside className="foundation-note">
-        <span aria-hidden="true">i</span>
-        <div>
-          <strong>Базовая настройка завершена</strong>
-          <p>Операции и аналитические разделы появятся на следующем этапе интерфейса.</p>
-        </div>
-      </aside>
     </div>
   );
 }
@@ -940,18 +926,6 @@ function BrandMark() {
   );
 }
 
-function NotFound({ navigate }: { navigate: Navigate }) {
-  return (
-    <ErrorState
-      message="Такого раздела пока нет или адрес изменился."
-      onRetry={() => {
-        navigate("/app/dashboard", { replace: true });
-      }}
-      title="Страница не найдена"
-    />
-  );
-}
-
 function useBrowserPath(): [string, Navigate] {
   const [path, setPath] = useState(() => normalizePath(window.location.pathname));
   useEffect(() => {
@@ -979,27 +953,6 @@ function useBrowserPath(): [string, Navigate] {
 function normalizePath(path: string): string {
   if (path === "") return "/";
   return path.length > 1 ? path.replace(/\/+$/u, "") : path;
-}
-
-function formatMoney(amount: string, currency: string, locale: string): string {
-  const negative = amount.startsWith("-");
-  const unsigned = negative ? amount.slice(1) : amount;
-  const [integer = "0", fraction] = unsigned.split(".");
-  let group = "\u00a0";
-  let decimal = ",";
-  try {
-    const parts = new Intl.NumberFormat(locale).formatToParts(12345.6);
-    group = parts.find((part) => part.type === "group")?.value ?? group;
-    decimal = parts.find((part) => part.type === "decimal")?.value ?? decimal;
-  } catch {
-    // Stable Russian-style fallback keeps the decimal string exact.
-  }
-  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/gu, group);
-  return `${negative ? "−" : ""}${grouped}${fraction === undefined ? "" : `${decimal}${fraction}`}\u00a0${currency}`;
-}
-
-function accountKindLabel(kind: string): string {
-  return accountKinds.includes(kind as AccountKind) ? accountKindLabels[kind as AccountKind] : kind;
 }
 
 function defaultLocale(): string {
