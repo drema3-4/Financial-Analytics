@@ -8,6 +8,7 @@ export default defineConfig({
       include: [
         "apps/web/src/api.ts",
         "apps/web/src/App.tsx",
+        "apps/web/src/ui/money.ts",
         "packages/frontend/api/src/index.ts",
       ],
       provider: "v8",
@@ -21,6 +22,7 @@ export default defineConfig({
     },
     environment: "jsdom",
     include: ["apps/web/src/**/*.test.{ts,tsx}", "packages/frontend/api/src/**/*.test.ts"],
+    pool: "vmThreads",
     setupFiles: ["./apps/web/test/setup.ts"],
   },
 });

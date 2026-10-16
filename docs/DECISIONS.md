@@ -329,3 +329,31 @@ LLM не влияет на core readiness.
 одной конфигурацией. Неперсистентный ответ не создаёт нового источника финансовой истины, а
 graceful status сохраняет обязательную работоспособность приложения без LLM.
 
+## ADR-019: frontend session boundary и server-derived onboarding
+
+**Дата:** 2026-10-16.
+
+**Решение:** React-приложение использует сгенерированный из OpenAPI fetch-client только через
+небольшой browser gateway. Gateway централизует credentials, чтение double-submit CSRF cookie,
+idempotency key для финансовой команды, однократный refresh истёкшего access token и перевод
+безопасных `ProblemDetails` в UI-состояния. Компоненты и routes не собирают HTTP-запросы сами.
+
+Точка onboarding не хранится отдельным mutable-флагом: успешная master session вместе с
+пустым owner-scoped списком счетов означает последний шаг первого запуска; наличие хотя бы
+одного счёта ведёт на dashboard. Поэтому повторное открытие, refresh и прерванный мастер
+восстанавливаются из server truth. Денежный input хранит пользовательскую строку, удаляет
+locale-разделители строковыми операциями и отправляет каноническую decimal-строку без
+промежуточного JavaScript `number`.
+
+Для текущего малого route graph используется History API с явными public/protected/not-found
+boundaries без runtime router dependency. UI primitives принадлежат приложению, строятся на
+нативной семантике (`button`, label/input, table/list, `dialog`) и не зависят от generic admin
+kit. Шрифты системные и не загружаются с внешнего CDN. При росте вложенных маршрутов этапа 11
+router может быть добавлен отдельным решением, не меняя session/API boundary.
+
+**Почему:** единая session boundary исключает расхождение CSRF/refresh поведения между
+экранами, а server-derived onboarding не создаёт второй источник истины. Строковый денежный
+путь сохраняет точность контракта. Нативные controls уменьшают accessibility-риск и вес
+локального-first приложения; отсутствие преждевременной router/UI-library зависимости
+оставляет визуальное направление самостоятельным.
+

@@ -1,21 +1,49 @@
 # Статус проекта
 
-Обновлено: 2026-10-14
+Обновлено: 2026-10-16
 
 ## Текущее состояние
 
-- Стадия: завершён `09 — LLM Advice`; provider-neutral boundary, privacy/structured response и
-  fake OpenAI-compatible contracts реализованы, core default остаётся `LLM_PROVIDER=disabled`.
-- Реализация: `advice-context-v1` собирается только из owner-scoped aggregates, deterministic
-  forecast и numeric goal plans; `financial-advice-v1` не выдаёт tools, response schema и
-  evidence IDs проверяются до показа. `/api/v1/advice` ничего не сохраняет и возвращает
-  graceful status при disabled/unavailable/invalid provider.
-- Следующий этап: `10 — Frontend Foundation`; не начат и требует отдельного явного запроса.
+- Стадия: завершён `10 — Frontend Foundation`; адаптивный React shell, session boundary,
+  login и полный onboarding до первого счёта реализованы.
+- Реализация: сгенерированный API client скрыт за browser gateway с CSRF/refresh/idempotency;
+  onboarding создаёт master-профиль, locale/timezone/валюту и первый счёт с точной строковой
+  суммой. Responsive shell, route/error boundaries и loading/empty/error/session-expired
+  состояния работают от 360 px с keyboard/focus/reduced-motion baseline.
+- Следующий этап: `11 — Finance UI`; не начат и требует отдельного явного запроса.
 - Host global toolchain из снимка этапа 00 всё ещё может отличаться от baseline; repository
   gate подтверждён в Python 3.12.12 environment, pnpm 12.12.1 и закреплённых containers.
 - LLM не входит в core startup. Compose profile `local-llm` и `Qwen/Qwen3-4B-AWQ` **tested**
   на RTX 3050 6 ГБ: context 2048, одна sequence, GPU reserve `0.80`, non-thinking smoke,
   VRAM/latency и полный strict-schema adapter round-trip подтверждены; детали в `docs/LLM.md`.
+
+## Готово в этапе 10
+
+- `docs/UI.md` фиксирует самостоятельное редакционное направление, design tokens, кириллическую
+  типографику, chart palette, responsive rules и обязательные состояния вместо generic admin
+  template. Базовые button/input/money/date/dialog/drawer/table/list/state/toast components
+  используют нативную семантику и видимый focus.
+- Browser gateway интегрирует checked-in generated client, credential cookies, double-submit
+  CSRF, криптографический idempotency key и один session refresh. Истёкшая session получает
+  отдельное состояние и безопасно возвращает пользователя ко входу.
+- Первый запуск ведёт через master email/password, базовую валюту, locale, IANA timezone и
+  первый счёт. Начальный остаток нормализуется из locale input только строковыми операциями и
+  отправляется как Decimal contract; дата фиксируется как local noon выбранного timezone и
+  сохраняется UTC instant.
+- App shell использует public/protected/not-found boundaries, desktop sidebar и mobile
+  header/bottom navigation. Dashboard подтверждает первый счёт, не забирая объём Finance UI
+  этапа 11. Global error boundary сообщает, что финансовые данные не изменены.
+- Playwright smoke перехватывает API на contract boundary, проверяет login и полный onboarding,
+  строковый JSON amount, CSRF header, keyboard submit и отсутствие horizontal overflow при
+  ширине 360 px. ADR-019 фиксирует session/onboarding boundary.
+
+## Проверки этапа 10
+
+- Frontend: ESLint и Prettier, strict TypeScript, production build — зелёные.
+- Component/integration: `28 passed`; coverage `92.17%` statements, `84.11%` branches,
+  `89.71%` functions и `93.07%` lines при required `80%`.
+- Playwright Chromium/Chrome smoke: `2 passed` — существующий login и новый master onboarding
+  до dashboard, включая mobile 360 px.
 
 ## Готово в этапе 09
 
@@ -228,3 +256,4 @@
 | 07 Analytics | завершён | `feat(07): provide reconciled financial analytics` | 82 backend tests, 87.37%, reconciliation/plan/integration/contract, 8 frontend tests, Compose |
 | 08 Forecast & Goals | завершён | `feat(08): forecast finances and plan goals` | 93 backend tests, 86.74%, golden/property/integration/contract, 8 frontend tests |
 | 09 LLM Advice | завершён | `feat(09): add private provider-neutral financial advice` | 109 backend / 87.01%, fake provider matrix, 8 frontend tests; RTX 3050 local vLLM tested |
+| 10 Frontend Foundation | завершён | `feat(10): build accessible application foundation` | 28 component/integration, 2 Playwright; lint/typecheck/build, a11y/responsive baseline |

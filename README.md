@@ -172,6 +172,19 @@ pnpm test
 pnpm build
 ```
 
+Для browser smoke первого запуска один раз установите закреплённый Chromium и запустите
+отдельный E2E gate:
+
+```powershell
+pnpm test:e2e:install
+pnpm test:e2e
+```
+
+На Windows smoke по умолчанию использует установленный stable Chrome, чтобы browser process
+не зависел от ограничений запуска из пользовательского `AppData`; на Linux используется
+закреплённый Playwright Chromium. Канал можно явно переопределить переменной
+`PLAYWRIGHT_CHANNEL`.
+
 Development server:
 
 ```text
