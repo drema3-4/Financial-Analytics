@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from financial_analytics_app.identity import (
+    AccessManagementDeniedError,
     BootstrapClosedError,
     CsrfValidationError,
     DisabledUserError,
@@ -220,6 +221,18 @@ def install_error_handlers(app: FastAPI) -> None:
             code="email_not_allowed",
             title="Email not allowed",
             detail="This email address is not eligible for an invitation.",
+        )
+
+    @app.exception_handler(AccessManagementDeniedError)
+    async def access_management_denied_handler(
+        request: Request, exc: AccessManagementDeniedError
+    ) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=403,
+            code="access_management_denied",
+            title="Access denied",
+            detail="Master or administrator access is required.",
         )
 
     @app.exception_handler(EmailTokenInvalidError)

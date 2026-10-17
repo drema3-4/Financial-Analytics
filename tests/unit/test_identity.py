@@ -6,6 +6,7 @@ from datetime import timedelta
 import pytest
 
 from financial_analytics_app.identity import (
+    AccessManagementDeniedError,
     AuthService,
     BootstrapClosedError,
     CsrfValidationError,
@@ -275,6 +276,82 @@ def test_invitation_requires_allowlist_and_token_is_one_time_with_ttl() -> None:
             EmailTokenPurpose.INVITATION,
             actor_id=master.id,
         )
+
+
+def test_invitation_acceptance_roles_replay_and_password_reset_are_audited() -> None:
+    service, store, clock = auth_service()
+    master = bootstrap(service).profile
+    invitations = InvitationService(
+        store,
+        HmacSecretProvider(EMAIL_KEY),
+        FakePasswordHashes(),
+        public_base_url="https://finance.example.test",
+        clock=clock,
+    )
+    invitations.allow_email("admin@example.com", actor_id=master.id)
+    invitation, raw_token = invitations.issue_invitation(
+        "admin@example.com", actor_id=master.id, is_admin=True
+    )
+
+    assert invitation.expires_at.value - invitation.created_at.value == timedelta(hours=2)
+    assert len(store.email_jobs) == 1
+    assert raw_token in (store.email_jobs[0].text_body or "")
+    accepted = invitations.accept_invitation(
+        raw_token,
+        password="another correct horse battery",
+        base_currency="RUB",
+        locale="ru-RU",
+        timezone="Europe/Saratov",
+    )
+    assert accepted.email.value == "admin@example.com"
+    assert accepted.is_admin
+    assert accepted.email_verified_at == clock()
+    with pytest.raises(EmailTokenInvalidError):
+        invitations.accept_invitation(
+            raw_token,
+            password="another correct horse battery",
+            base_currency="RUB",
+            locale="ru-RU",
+            timezone="Europe/Saratov",
+        )
+    assert any(event == "identity.email_token_replay_rejected" for event, _ in store.audit)
+
+    before_unknown_request = len(store.email_jobs)
+    invitations.request_password_reset("missing@example.com")
+    assert len(store.email_jobs) == before_unknown_request
+    reset_token, raw_reset = invitations.issue_user_token(
+        accepted.id,
+        EmailTokenPurpose.RESET_PASSWORD,
+        actor_id=accepted.id,
+    )
+    assert reset_token.expires_at.value - reset_token.created_at.value == timedelta(minutes=15)
+    invitations.reset_password(raw_reset, new_password="fresh correct horse battery")
+    assert store.auth_by_email[accepted.email.value].password_hash == (
+        "hashed::fresh correct horse battery"
+    )
+    with pytest.raises(EmailTokenInvalidError):
+        invitations.reset_password(raw_reset, new_password="fresh correct horse battery")
+
+
+def test_only_master_or_admin_can_manage_access_and_only_master_grants_admin() -> None:
+    service, store, clock = auth_service()
+    master = bootstrap(service).profile
+    invitations = InvitationService(
+        store,
+        HmacSecretProvider(EMAIL_KEY),
+        FakePasswordHashes(),
+        clock=clock,
+    )
+    member = replace(master, id=master.id.__class__(int=2), is_master=False, is_admin=False)
+    store.profiles[member.id] = member
+    with pytest.raises(AccessManagementDeniedError):
+        invitations.allow_email("new@example.com", actor_id=member.id)
+
+    admin = replace(master, id=master.id.__class__(int=3), is_master=False, is_admin=True)
+    store.profiles[admin.id] = admin
+    invitations.allow_email("new@example.com", actor_id=admin.id)
+    with pytest.raises(AccessManagementDeniedError):
+        invitations.issue_invitation("new@example.com", actor_id=admin.id, is_admin=True)
 
 
 def test_sliding_window_limiter_expires_old_events_and_validates_configuration() -> None:

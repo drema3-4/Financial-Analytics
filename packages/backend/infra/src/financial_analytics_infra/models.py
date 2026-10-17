@@ -49,6 +49,8 @@ class UserModel(Base):
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'active'"))
     is_master: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -150,6 +152,7 @@ class InvitationModel(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -182,6 +185,42 @@ class EmailTokenModel(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EmailDeliveryJobModel(Base):
+    __tablename__ = "email_delivery_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "purpose IN ('invitation', 'verify_email', 'reset_password')",
+            name="email_delivery_job_purpose",
+        ),
+        CheckConstraint(
+            "state IN ('pending', 'leased', 'completed', 'dead_letter')",
+            name="email_delivery_job_state",
+        ),
+        CheckConstraint("attempts >= 0 AND attempts <= 5", name="email_delivery_job_attempts"),
+        Index("ix_email_delivery_jobs_claim", "state", "available_at", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    token_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("email_tokens.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False)
+    recipient: Mapped[str] = mapped_column(String(254), nullable=False)
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    text_body: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'pending'"))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    lease_owner: Mapped[str | None] = mapped_column(String(200))
+    leased_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AccountModel(Base):

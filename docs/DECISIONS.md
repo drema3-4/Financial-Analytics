@@ -427,3 +427,45 @@ Alpine variants имели только исправляемые package finding
 а удаление неиспользуемого npm уменьшает web runtime и исключает его dependency tree из
 production attack surface. Дистрибутив builder и runtime одинаков, поэтому собранные native
 wheels не пересекают glibc/musl boundary.
+
+## ADR-023: invite-only access, SMTP outbox и production overlay
+
+**Дата:** 2026-10-16.
+
+**Решение:** публичная регистрация не добавляется. Первый master создаётся существующим
+одноразовым bootstrap, но в production запрос обязан совпасть с заранее настроенным
+`BOOTSTRAP_MASTER_EMAIL`. Последующие пользователи создаются только атомарным принятием
+неотозванного invitation для активной allowlist-записи. Master и явно назначенный им admin
+могут управлять allowlist и приглашениями; выдавать admin-доступ может только master.
+Отзыв allowlist является soft-revoke: учётная запись блокируется, сессии и неиспользованные
+ссылки отзываются, но пользователь, audit trail и финансовые строки не удаляются.
+
+Invitation, verification и password-reset письма доставляются отдельным durable SMTP outbox.
+API сохраняет хеш одноразового токена и delivery job в одной транзакции; raw URL существует в
+ограниченном payload outbox до доставки либо terminal/expired/revoked state и затем очищается. Worker арендует jobs
+через `FOR UPDATE SKIP LOCKED`, повторяет временные SMTP ошибки с bounded backoff и переводит
+исчерпанные задания в dead letter. Логи и audit никогда не содержат email, URL или raw token.
+Запрос восстановления пароля всегда отвечает одинаковым `202`, независимо от существования
+аккаунта. TTL: invitation 2 часа, verification 30 минут, reset 15 минут; replay отклоняется и,
+когда token id существует, добавляет audit event.
+
+Compose получает явные профили `core`, `mail-catcher` и `local-llm`. Production overlay
+сбрасывает host ports и build instructions, использует versioned application images, pinned
+upstream images, resource limits, restart policies и те же healthchecks. TLS завершается только
+на выбранном оператором reverse proxy; приложение доверяет forwarded headers лишь от явно
+перечисленных proxy IP/CIDR. Production startup требует HTTPS public URL/origins, Secure cookie,
+bootstrap email, SMTP TLS и непредсказуемые независимые secrets. Автоматический ACME flow не
+включается до выбора домена и хоста.
+
+**Почему:** отдельный email outbox не смешивает identity delivery с финансовым recurring
+outbox, но сохраняет атомарность выдачи ссылки и постановки письма. Soft-revoke выполняет
+invite-only policy без нарушения неизменяемой финансовой истории. Overlay позволяет одним и
+тем же исходникам обслуживать локальный rehearsal и server deployment, не публикуя database/API
+ports и не притворяясь владельцем DNS/TLS инфраструктуры.
+
+**Уточнение rehearsal 2026-10-17:** в пустом HF cache встроенный `hf_transfer` завершился
+`Failed too many failures in parallel / no permits available`. Для воспроизводимого local-LLM
+используется обычный HTTPS downloader: `HF_HUB_ENABLE_HF_TRANSFER=0` вместе с отключённым Xet;
+TLS verification сохраняется. Наблюдавшаяся официальная snapshot revision Qwen3-4B-AWQ
+`74d4bd2bd4bff9cafc9345221320bffb08b406a3` закрепляется отдельно от image digest, чтобы обновление
+upstream `main` не меняло веса релиза. Это исправление release profile, не смена модели/engine.

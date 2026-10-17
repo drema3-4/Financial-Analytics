@@ -1,4 +1,4 @@
-# API contract through milestone 12
+# API contract through milestone 13
 
 FastAPI публикует актуальную OpenAPI-схему по `/openapi.json` и интерактивную документацию
 по `/docs`. Зафиксированный snapshot находится в `docs/openapi.json`; из него
@@ -27,20 +27,31 @@ financial values are not request-log fields.
 | `POST` | `/api/v1/auth/refresh` | refresh cookie + CSRF, rate limited | rotated cookies + profile |
 | `POST` | `/api/v1/auth/logout` | access cookie + CSRF | revoke current, `204` |
 | `POST` | `/api/v1/auth/logout-all` | access cookie + CSRF | revoke all owner sessions, `204` |
+| `POST` | `/api/v1/auth/invitations/accept` | one-time link | create invited profile + session, `201` |
+| `POST` | `/api/v1/auth/email-verification/request` | access cookie + CSRF | queue verification, `202` |
+| `POST` | `/api/v1/auth/email-verification/confirm` | one-time link | verify email |
+| `POST` | `/api/v1/auth/password-reset/request` | public, uniform response | queue when eligible, always `202` |
+| `POST` | `/api/v1/auth/password-reset/confirm` | one-time link | replace password + revoke sessions, `204` |
 | `GET` | `/api/v1/profile` | access cookie | current owner profile |
+| `GET`, `POST` | `/api/v1/admin/allowlist` | master/admin; POST + CSRF | list/add/reactivate email |
+| `DELETE` | `/api/v1/admin/allowlist/{id}` | master/admin + CSRF | soft-revoke access |
+| `GET`, `POST` | `/api/v1/admin/invitations` | master/admin; POST + CSRF | list/issue invitation |
 
 Bootstrap/login принимают JSON и никогда не возвращают token в body. Access `fa_access` и
 refresh `fa_refresh` имеют `HttpOnly; Secure; SameSite=Strict`; `fa_csrf` имеет
 `Secure; SameSite=Strict` и передаётся обратно заголовком `X-CSRF-Token` для mutation.
 Имена cookie конфигурируемы. Публичный profile содержит `id`, нормализованный `email`,
-`base_currency`, `locale`, `timezone`, `status`, `is_master`, `created_at`.
+`base_currency`, `locale`, `timezone`, `status`, `is_master`, `is_admin`, `email_verified`,
+`created_at`.
 
 Expected security errors: `bootstrap_closed` (`409`), `invalid_credentials`/`invalid_session`
 (`401`), `csrf_validation_failed`/`user_disabled` (`403`) и `rate_limit_exceeded` (`429` с
 `Retry-After`). Ответ не различает неизвестный email и неверный пароль.
 
-Allowlist, invitation и email-token use cases существуют на application boundary, но намеренно
-не публикуются HTTP/UI до этапа 13 и не требуют SMTP.
+Only master may issue an invitation with `is_admin=true`. Password-reset requests do not reveal
+whether the normalized email exists. Invitation/verification/reset TTL is respectively
+2 hours/30 minutes/15 minutes; reuse returns the same safe `invalid_email_token` error and a
+known-token replay is audited.
 
 ## Ledger API
 

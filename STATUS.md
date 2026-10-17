@@ -1,20 +1,105 @@
 # Статус проекта
 
-Обновлено: 2026-10-16
+Обновлено: 2026-10-17
 
 ## Текущее состояние
 
-- Стадия: завершён `12 — E2E, безопасность и эксплуатационная устойчивость`; семь сценариев
-  `SPEC.md` доказаны через реальный Chromium, FastAPI и отдельную PostgreSQL database.
-- Реализация: системная reconciliation, threat tests, безопасная наблюдаемость, recovery scripts,
-  restore drill, resilience/performance gates и CI supply-chain policy входят в milestone.
-- Следующий шаг: настроить production secrets/TLS, backup storage/retention и shared rate limiter
-  для выбранной deployment environment; новых продуктовых возможностей этот этап не добавляет.
+- Стадия: завершён `13 — Invite-only сервер и релиз`; локальный release и безопасный путь
+  server rollout подготовлены, фактические проверки и ограничения зафиксированы.
+- Реализация: SMTP outbox, master/admin allowlist UI/API, одноразовые invitation/verification/reset
+  ссылки, production validation, три Compose profiles и production overlay.
+- Версия: предложение `0.2.0`, tag proposal `v0.2.0`; tag/push/external deploy не выполнялись.
+- Следующий внешний gate: выбрать домен/хост, TLS/SMTP/secrets и оператора backup/rollback,
+  выполнить независимую ручную приёмку и подтвердить публикацию.
 - Host global toolchain из снимка этапа 00 всё ещё может отличаться от baseline; repository
   gate подтверждён в Python 3.12.12 environment, pnpm 12.12.1 и закреплённых containers.
 - LLM не входит в core startup. Compose profile `local-llm` и `Qwen/Qwen3-4B-AWQ` **tested**
   на RTX 3050 6 ГБ: context 2048, одна sequence, GPU reserve `0.80`, non-thinking smoke,
   VRAM/latency и полный strict-schema adapter round-trip подтверждены; детали в `docs/LLM.md`.
+
+## Готово в этапе 13
+
+- Явные `core`, `mail-catcher`, `local-llm`; core не требует GPU/LLM. Локальные web/API/Mailpit/
+  vLLM ports привязаны к loopback. Production overlay убирает build/host ports, сохраняет
+  healthchecks и задаёт restart policies/resource limits; upstream images закреплены digest.
+  Для server rollout используются immutable digests собственных backend/web images.
+- SMTP adapter поддерживает plain development, STARTTLS и implicit TLS с проверкой сертификата.
+  Durable identity outbox атомарен с выпуском токена; lease/backoff, пять попыток, dead-letter,
+  recovery после crash и очистка raw body при delivery/terminal state проверены на PostgreSQL.
+- TTL: invitation `2 h`, verification `30 min`, reset `15 min`. Consume/mutation атомарны;
+  повтор известного токена отклоняется и добавляет audit event. Reset завершает старые сессии;
+  public recovery request одинаково отвечает `202` для существующей и неизвестной почты.
+- UI/API allowlist/invitations разрешены только master/admin; только master выдаёт admin role.
+  Revoke блокирует non-master, sessions и unused links, сохраняя user/financial/audit rows.
+  Re-add возвращает существующий tenant. Production bootstrap ограничен настроенной почтой и
+  выполняется оператором по приватному соединению до открытия ingress.
+- Production startup отклоняет default/predictable/reused secrets, debug/DEBUG logging,
+  wildcard/HTTP origins, insecure cookies, HTTP public URL, wildcard/all-address proxy trust,
+  plaintext SMTP и отсутствующие обязательные настройки. Ошибки settings не печатают inputs.
+- Обновлены OpenAPI/client, ADR-023, архитектура/модель данных/security docs, deployment guide,
+  changelog, release checklist и user/admin runbook. TLS выдаётся выбранным оператором после
+  выбора реального домена/хоста; выдуманного ACME deployment flow нет.
+
+## Проверки этапа 13
+
+- Backend: `131 passed`, coverage `86.46%`, `67.48 s`; Poetry lock, Ruff, strict mypy и
+  OpenAPI/client drift зелёные. Migration upgrade/check/empty downgrade на PostgreSQL 18 зелёные.
+- Frontend: `44 passed`; coverage statements `89.05%`, branches `80.30%`, functions `84.95%`,
+  lines `89.70%`; ESLint, Prettier, TypeScript и production build зелёные.
+- Реальный Chromium/FastAPI/PostgreSQL: все семь системных E2E сценариев `SPEC.md` прошли за
+  `1.4 m`. Deterministic golden/property/reconciliation и cross-tenant gates входят в pytest.
+- Clean-clone core: первый build/start `63.1 s`, финальный cached repeat `33.5 s`, healthy без
+  vLLM. Release walkthrough: onboarding → expense → forecast/goal → disabled advice прошёл;
+  `10000.00 - 125.25 = 9874.75 RUB` сверено exact Decimal.
+- Mail-catcher: финальный clean repeat `27.5 s`, healthy, invitation/reset доставлены по одной попытке, replay обоих отклонён;
+  audit содержит `2` rejection events, normal user admin API denied, raw delivery bodies очищены.
+- Production-like: `30.0 s`, финальный повтор `31.5 s`, healthy, walkthrough прошёл, web `200 alive`, опубликованных
+  ports/build instructions нет; фактический startup с debug/insecure cookie/wildcard CORS/
+  default identity secret или слабым DB password завершился exit `1`.
+- Backup/restore повторён на revision `20261016_0011`: все counts/digests, postings и balances
+  совпали; current-head/metadata drift восстановленной БД зелёные.
+- Trivy `0.76.0`: repository lockfiles/Dockerfiles и backend/web runtime — `0 High/Critical`,
+  секретов не обнаружено. Полные generated reports/weights/DB/cache в commit не входят.
+- GPU: corrected cold-cache startup `232.4 s`, vLLM healthy, simple chat `3048 ms`, observed
+  VRAM `5961/6144 MiB`, OOM не наблюдался. После выключения core ready/provider disabled,
+  revision `20261016_0011`, users `1`, transactions `2`, goals `1`, баланс `9874.75 RUB` сохранены.
+  Полный structured advice превысил deadline клиента `180 s`; его успешность не заявляется.
+- Точные команды, найденные/исправленные rehearsal issues и фактические ограничения:
+  `docs/FRESH_MACHINE_REHEARSAL.md`.
+
+## Definition of Done и остаточные ограничения
+
+- [x] Все семь ключевых сценариев автоматизированы E2E; release walkthrough и семь ручных
+  путей описаны в runbook. Локальная автоматическая release-приёмка пройдена.
+- [x] Балансы, проценты, прогнозы и goal feasibility считаются exact decimal engine и сверены
+  с независимыми golden/property examples; LLM не вычисляет финансовые результаты.
+- [x] Повтор запросов/recurring jobs не создаёт postings-дубли; email delivery at-least-once,
+  но ссылка действует один раз. Crash после приёма SMTP может доставить одинаковое письмо дважды.
+- [x] Tenant isolation, auth/rate limits, CSRF, session/token replay и backup/restore проверены.
+- [x] Core воспроизводится по README из clean clone без host Python/Node/LLM/GPU и hidden `.env`.
+- [x] GPU enable/disable без schema delta и потери данных подтверждены; hardware/performance
+  ограничение полного совета зафиксировано.
+- [x] Код и application runtime прошли vulnerability/secret gates без High/Critical findings.
+- [ ] Независимая ручная приёмка всех семи путей на выбранном публичном хосте.
+
+Остаточные deployment boundaries: реальный домен/хост не выбран, TLS ingress/certificate renewal,
+SMTP relay с реальными credentials, off-host backup schedule/retention и внешнее восстановление/
+rollback ещё не проверены. Локальный smoke использует private HTTP внутри container network
+при production HTTPS assumptions; это не доказательство TLS на внешнем домене. Bootstrap email
+не является секретом — до инициализации master публичный ingress должен быть закрыт.
+
+Rate limiter хранится в памяти одного API process: перед несколькими replicas нужен shared
+limiter либо централизованный proxy policy, в том числе для email recovery abuse. Pending email
+jobs содержат raw link до завершения/истечения; DB/backups требуют защиты секретов. Optional vLLM
+имеет отдельный upstream security/hardware gate перед публичным использованием; итоговый
+application image scan не объявляется полным scan всех upstream GPU dependencies. Скан и SBOM
+перед реальной публикацией повторяются. Signed tag/push/deploy требуют отдельного разрешения.
+
+На текущем GPU полный structured advice не уложился в `180 s` client deadline при provider
+timeout `120 s` и двух retries. Успешный simple chat не считается доказательством полной
+structured генерации. Для ограниченного latency budget оператору следует задать
+`LLM_MAX_RETRIES=0` и отдельно проверить полный совет на целевом host; core и deterministic
+финансовые сценарии от его результата не зависят.
 
 ## Готово в этапе 12
 

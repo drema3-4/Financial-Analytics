@@ -1,14 +1,29 @@
 name: financial-analytics
 
+x-core-profiles: &core-profiles [core, mail-catcher, local-llm]
+
 x-backend-environment: &backend-environment
   APP_ENV: development
+  APP_VERSION: 0.2.0
+  DEBUG: "false"
   CORS_ORIGINS: '["http://localhost:4173"]'
   DATABASE_URL: postgresql+psycopg://financial_analytics:${POSTGRES_PASSWORD:-financial_analytics_dev}@postgres:5432/financial_analytics
   LOG_LEVEL: INFO
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:4173}
+  BOOTSTRAP_MASTER_EMAIL: ${BOOTSTRAP_MASTER_EMAIL:-}
+  TRUSTED_PROXY_IPS: "[]"
   SESSION_SECRET: ${SESSION_SECRET:-development-session-key-change-me-0001}
   CSRF_SECRET: ${CSRF_SECRET:-development-csrf-key-change-me-now-0001}
   EMAIL_TOKEN_SECRET: ${EMAIL_TOKEN_SECRET:-development-email-key-change-me-now-0001}
   SESSION_COOKIE_SECURE: "true"
+  SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
+  SMTP_HOST: ${SMTP_HOST:-mailpit}
+  SMTP_PORT: ${SMTP_PORT:-1025}
+  SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-no-reply@localhost}
+  SMTP_SECURITY: ${SMTP_SECURITY:-plain}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
   LLM_PROVIDER: ${LLM_PROVIDER:-disabled}
   LLM_BASE_URL: ${LLM_BASE_URL:-http://vllm:8000/v1}
   LLM_API_KEY: ${LLM_API_KEY:-}
@@ -23,7 +38,8 @@ x-backend-environment: &backend-environment
   LLM_SUPPORTS_NON_THINKING: ${LLM_SUPPORTS_NON_THINKING:-true}
 
 x-backend: &backend
-  image: financial-analytics-backend:01
+  image: financial-analytics-backend:0.2.0
+  profiles: *core-profiles
   environment: *backend-environment
   init: true
   stop_grace_period: 35s
@@ -34,6 +50,7 @@ x-backend: &backend
 services:
   postgres:
     image: postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
+    profiles: *core-profiles
     environment:
       POSTGRES_DB: financial_analytics
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-financial_analytics_dev}
@@ -80,7 +97,7 @@ services:
       retries: 12
       start_period: 5s
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
   worker:
     <<: *backend
@@ -91,12 +108,13 @@ services:
     healthcheck:
       test: ["CMD", "python", "-m", "financial_analytics_worker", "--healthcheck"]
       interval: 10s
-      timeout: 5s
+      timeout: 15s
       retries: 6
       start_period: 10s
 
   web:
-    image: financial-analytics-web:01
+    image: financial-analytics-web:0.2.0
+    profiles: *core-profiles
     build:
       context: .
       dockerfile: infra/docker/web/Dockerfile
@@ -119,17 +137,39 @@ services:
       start_period: 5s
     init: true
     ports:
-      - "4173:4173"
+      - "127.0.0.1:4173:4173"
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
 
+  mailpit:
+    image: axllent/mailpit:v1.31.5@sha256:94f6b70c1436defae6799d9ac7ff0eeff9540465b842026d5cdb018f1c0234ea
+    profiles: [mail-catcher]
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: "1000"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    ports:
+      - "127.0.0.1:8025:8025"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - mailpit_data:/data
+
   vllm:
-    profiles: ["local-llm"]
+    profiles: [local-llm]
     image: vllm/vllm-openai:v0.11.0@sha256:014a95f21c9edf6abe0aea6b07353f96baa4ec291c427bb1176dc7c93a85845c
     command:
       - --model
       - Qwen/Qwen3-4B-AWQ
+      - --revision
+      - ${VLLM_MODEL_REVISION:-74d4bd2bd4bff9cafc9345221320bffb08b406a3}
       - --served-model-name
       - Qwen/Qwen3-4B-AWQ
       - --max-model-len
@@ -140,6 +180,7 @@ services:
       - ${VLLM_GPU_MEMORY_UTILIZATION:-0.80}
     environment:
       HF_HUB_DISABLE_XET: "1"
+      HF_HUB_ENABLE_HF_TRANSFER: "0"
     deploy:
       resources:
         reservations:
@@ -161,11 +202,12 @@ services:
       start_period: 3m
     ipc: host
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     restart: unless-stopped
     volumes:
       - huggingface_cache:/root/.cache/huggingface
 
 volumes:
   huggingface_cache:
+  mailpit_data:
   postgres_data:

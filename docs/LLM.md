@@ -113,8 +113,14 @@ docker compose --profile local-llm up --build --wait
 ```
 
 vLLM публикуется для диагностики на `http://localhost:8001`; backend обращается к нему только
-по внутреннему имени `vllm:8000`. Для возврата к core удалите эти process-local environment
-variables и выполните обычный `docker compose up --build --wait`.
+по внутреннему имени `vllm:8000`. Для возврата к core остановите optional service, удалите
+provider overrides и пересоздайте core; schema и финансовые volumes остаются прежними:
+
+```powershell
+docker compose --profile local-llm stop vllm
+Remove-Item Env:LLM_PROVIDER, Env:LLM_BASE_URL, Env:LLM_ENDPOINT_SCOPE, Env:LLM_TIMEOUT_SECONDS -ErrorAction SilentlyContinue
+docker compose --profile core up -d --wait
+```
 
 ## RTX 3050 6 ГБ: smoke, VRAM и latency
 
@@ -147,6 +153,19 @@ constrained decoding, поэтому для этой GPU локальному pr
 На машине Docker/Hugging Face Xet transport не доверял локальной TLS-цепочке. Profile использует
 `HF_HUB_DISABLE_XET=1`, после чего веса скачались по обычному HTTPS с проверкой сертификатов;
 TLS verification не отключалась. Persistent `huggingface_cache` сохранён для повторных запусков.
+
+В release rehearsal этапа 13 дополнительно обнаружен сбой встроенного `hf_transfer` при
+скачивании в пустой cache (`no permits available`). Profile закрепляет
+`HF_HUB_ENABLE_HF_TRANSFER=0`, обычный certificate-verifying HTTPS downloader и model revision
+`74d4bd2bd4bff9cafc9345221320bffb08b406a3` через `VLLM_MODEL_REVISION`. Model weights не входят в Git.
+
+Повтор 2026-10-17: corrected cold-cache startup `232.4 s`, health `200`, simple chat `3048 ms`,
+observed VRAM `5961/6144 MiB`, OOM не наблюдался. Полный structured advice на release fixture
+превысил `180 s` client deadline при provider timeout `120 s` и двух retries; доступность полного
+совета в этом прогоне не подтверждена. Для одного ограниченного по времени запроса задайте
+`LLM_MAX_RETRIES=0` и измерьте полный adapter round-trip на целевом host. После выключения vLLM
+core ready/provider disabled и финансовые данные/schema сохранились. Точные команды и результаты
+приведены в `docs/FRESH_MACHINE_REHEARSAL.md`.
 
 Проверочная последовательность:
 

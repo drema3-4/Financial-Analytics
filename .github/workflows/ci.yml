@@ -113,10 +113,27 @@ jobs:
 
   compose-config:
     runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: prod-db-password-for-compose-validation
+      DATABASE_URL: postgresql+psycopg://financial_analytics:prod-db-password-for-compose-validation@postgres:5432/financial_analytics
+      CORS_ORIGINS: '["https://finance.example.test"]'
+      PUBLIC_BASE_URL: https://finance.example.test
+      BOOTSTRAP_MASTER_EMAIL: master@example.test
+      TRUSTED_PROXY_IPS: '["172.20.0.2"]'
+      SESSION_SECRET: compose-validation-session-secret-2026-Alpha!
+      CSRF_SECRET: compose-validation-csrf-secret-2026-Bravo!
+      EMAIL_TOKEN_SECRET: compose-validation-email-secret-2026-Charlie!
+      SMTP_HOST: smtp.example.test
+      SMTP_FROM_ADDRESS: no-reply@example.test
     steps:
       - uses: actions/checkout@v5
-      - name: Validate Compose model
-        run: docker compose config --quiet
+      - name: Validate local Compose profiles
+        run: |
+          docker compose --profile core config --quiet
+          docker compose --profile mail-catcher config --quiet
+          docker compose --profile local-llm config --quiet
+      - name: Validate production overlay
+        run: docker compose -f compose.yaml -f compose.production.yaml --profile core config --quiet
 
   system-e2e:
     runs-on: ubuntu-latest

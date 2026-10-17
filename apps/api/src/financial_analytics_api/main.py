@@ -24,7 +24,7 @@ from financial_analytics_app.advice import AdviceService, DisabledAdviceProvider
 from financial_analytics_app.analytics import AnalyticsService
 from financial_analytics_app.deposits import DepositService
 from financial_analytics_app.forecast import ForecastService
-from financial_analytics_app.identity import AuthService
+from financial_analytics_app.identity import AuthService, InvitationService
 from financial_analytics_app.ledger import LedgerService
 from financial_analytics_app.ports import AdviceProvider, AdviceProviderCapabilities
 from financial_analytics_app.scheduling import SchedulingService
@@ -54,6 +54,7 @@ def create_app(
     analytics_service: AnalyticsService | None = None,
     forecast_service: ForecastService | None = None,
     advice_service: AdviceService | None = None,
+    invitation_service: InvitationService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
     configure_logging(resolved_settings.log_level)
@@ -66,12 +67,21 @@ def create_app(
 
     if auth_service is None:
         identity_store = PostgresIdentityStore(resolved_settings.database_url)
+        password_hashes = Argon2idPasswordHashes()
         auth_service = AuthService(
             identity_store,
-            Argon2idPasswordHashes(),
+            password_hashes,
             HmacSecretProvider(resolved_settings.session_secret),
             HmacSecretProvider(resolved_settings.csrf_secret),
             InMemorySlidingWindowRateLimiter(),
+            bootstrap_master_email=resolved_settings.bootstrap_master_email,
+            clock=clock,
+        )
+        invitation_service = InvitationService(
+            identity_store,
+            HmacSecretProvider(resolved_settings.email_token_secret),
+            password_hashes,
+            public_base_url=resolved_settings.public_base_url,
             clock=clock,
         )
 
@@ -174,6 +184,7 @@ def create_app(
     app = FastAPI(
         title=resolved_settings.app_name,
         version=resolved_settings.app_version,
+        debug=resolved_settings.debug,
         lifespan=lifespan,
     )
     app.state.settings = resolved_settings
@@ -183,6 +194,7 @@ def create_app(
     app.state.job_snapshot = job_snapshot
     app.state.metrics = MetricsRegistry()
     app.state.auth_service = auth_service
+    app.state.invitation_service = invitation_service
     app.state.ledger_service = ledger_service
     app.state.scheduling_service = scheduling_service
     app.state.deposit_service = deposit_service

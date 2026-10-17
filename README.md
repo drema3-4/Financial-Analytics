@@ -1,11 +1,12 @@
 # Financial Analytics
 
-Local-first приложение для учёта личных финансов. Этапы 05–12 дают idempotent ledger API для
+Local-first приложение для учёта личных финансов. Этапы 05–13 дают idempotent ledger API для
 accounts, categories, income/expense/transfer/adjustment/reversal, stable cursor pagination,
 UTF-8 CSV export, recurring rules, deposits, reconciled analytics, детерминированные forecasts,
 versioned scenarios, numeric goal plans и необязательный provider-neutral LLM-советник.
 Generated TypeScript client построен поверх double-entry domain core. Identity
-использует одноразовый master bootstrap, Argon2id и ротируемые cookie sessions с CSRF/CORS.
+использует защищённый email-конфигурацией master bootstrap, invite-only allowlist, Argon2id,
+одноразовые SMTP links и ротируемые cookie sessions с CSRF/CORS.
 
 Источники требований: [SPEC.md](SPEC.md), [PLAN.md](PLAN.md) и
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -18,7 +19,7 @@ Desktop с WSL2 backend и Linux containers.
 Из корня репозитория на Windows PowerShell, в WSL2 или Linux выполните одну команду:
 
 ```text
-docker compose up --build --wait
+docker compose --profile core up --build --wait
 ```
 
 Команда собирает закреплённые Python/Node images, запускает PostgreSQL, применяет Alembic
@@ -36,11 +37,14 @@ placeholder.
 - readiness: <http://localhost:8000/health/ready>;
 - Prometheus metrics: <http://localhost:8000/metrics>.
 
-Первый мастер создаётся один раз через `POST /api/v1/auth/bootstrap`; контракт доступен в
+Первый мастер создаётся один раз через `POST /api/v1/auth/bootstrap`; в production email обязан
+совпасть с `BOOTSTRAP_MASTER_EMAIL`. Контракт доступен в
 `/docs`. Задайте email, пароль длиной от 12 символов, базовую валюту, locale и IANA timezone.
 Успешный ответ устанавливает Secure/HttpOnly session cookies, после чего повторный bootstrap
 возвращает `409`. Для production обязательно замените три identity secrets из `.env.example`;
 процедуры ротации описаны в [docs/SECURITY.md](docs/SECURITY.md).
+Production bootstrap выполняется через приватное соединение оператора до открытия публичного
+ingress: один лишь email не является секретом. Порядок приведён в [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 `/health/live` сообщает о работе процесса. `/health/ready` возвращает `200` только после
 проверки PostgreSQL и durable job store и отдельно показывает optional provider; при
@@ -63,17 +67,18 @@ RTX 3050 smoke/VRAM/latency описаны в [docs/LLM.md](docs/LLM.md).
 Статус и логи:
 
 ```text
-docker compose ps
-docker compose logs --no-color api worker web postgres
+docker compose --profile core ps
+docker compose --profile core logs --no-color api worker web postgres
 ```
 
 Остановить stack, сохранив данные в named volume:
 
 ```text
-docker compose down
+docker compose --profile core down
 ```
 
-Удаление volume выполняется только осознанно командой `docker compose down --volumes`: она
+Удаление volume выполняется только осознанно командой
+`docker compose --profile core down --volumes`: она
 безвозвратно удаляет локальную БД.
 
 ## Закреплённый toolchain
@@ -151,7 +156,7 @@ poetry run alembic check
 для публичного развёртывания. Без override миграции проверяются внутри сети Compose:
 
 ```text
-docker compose run --rm migrate python -m alembic current --check-heads
+docker compose --profile core run --rm migrate python -m alembic current --check-heads
 ```
 
 ## Frontend: локальная разработка
@@ -206,7 +211,7 @@ pnpm --filter @financial-analytics/web exec vite --host 127.0.0.1
 Проверка Compose без запуска сервисов:
 
 ```text
-docker compose config --quiet
+docker compose --profile core config --quiet
 ```
 
 Revisions `20261013_0004`–`20261014_0010` добавляют Ledger API, recurring rules/outbox,
@@ -220,7 +225,10 @@ integration tests и downgrade до пустого bootstrap revision. Полн�
 [docs/SECURITY.md](docs/SECURITY.md), LLM boundary — в [docs/LLM.md](docs/LLM.md).
 Backup/restore drill и RPO/RTO assumptions — в
 [docs/BACKUP_AND_RECOVERY.md](docs/BACKUP_AND_RECOVERY.md), E2E/threat/scanner gate — в
-[docs/HARDENING.md](docs/HARDENING.md).
+[docs/HARDENING.md](docs/HARDENING.md). Server overlay, TLS/proxy boundary и rollout — в
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md); user/admin operations — в
+[docs/RUNBOOK.md](docs/RUNBOOK.md), release gate — в
+[docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md).
 
 ## Структура
 

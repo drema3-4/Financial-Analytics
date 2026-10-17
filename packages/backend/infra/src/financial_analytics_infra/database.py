@@ -55,7 +55,11 @@ class Database:
               count(*) FILTER (WHERE state = 'pending') AS pending,
               count(*) FILTER (WHERE state = 'leased') AS leased,
               count(*) FILTER (WHERE state = 'dead_letter') AS dead_letter
-            FROM outbox_jobs
+            FROM (
+              SELECT state FROM outbox_jobs
+              UNION ALL
+              SELECT state FROM email_delivery_jobs
+            ) AS durable_jobs
             """
         )
         with self._engine.connect() as connection:

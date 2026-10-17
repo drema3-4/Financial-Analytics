@@ -1,0 +1,116 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-financial_analytics}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER:-financial_analytics}
+    ports: !reset []
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
+  migrate:
+    image: ${BACKEND_IMAGE:-financial-analytics-backend:0.2.0}
+    build: !reset null
+    environment: &production-backend-environment
+      APP_ENV: production
+      APP_VERSION: 0.2.0
+      DEBUG: "false"
+      CORS_ORIGINS: ${CORS_ORIGINS:?set HTTPS CORS_ORIGINS JSON}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set HTTPS PUBLIC_BASE_URL}
+      BOOTSTRAP_MASTER_EMAIL: ${BOOTSTRAP_MASTER_EMAIL:?set BOOTSTRAP_MASTER_EMAIL}
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:?set TRUSTED_PROXY_IPS JSON}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+      CSRF_SECRET: ${CSRF_SECRET:?set CSRF_SECRET}
+      EMAIL_TOKEN_SECRET: ${EMAIL_TOKEN_SECRET:?set EMAIL_TOKEN_SECRET}
+      SESSION_COOKIE_SECURE: "true"
+      SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
+      SMTP_HOST: ${SMTP_HOST:?set SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:?set SMTP_FROM_ADDRESS}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
+      LLM_PROVIDER: ${LLM_PROVIDER:-disabled}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-4B-AWQ}
+      LLM_ENDPOINT_SCOPE: ${LLM_ENDPOINT_SCOPE:-local}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-20}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
+      LLM_RETRY_BACKOFF_SECONDS: ${LLM_RETRY_BACKOFF_SECONDS:-0.25}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-800}
+      LLM_SUPPORTS_JSON_SCHEMA: ${LLM_SUPPORTS_JSON_SCHEMA:-true}
+      LLM_SUPPORTS_SYSTEM_MESSAGES: ${LLM_SUPPORTS_SYSTEM_MESSAGES:-true}
+      LLM_SUPPORTS_NON_THINKING: ${LLM_SUPPORTS_NON_THINKING:-true}
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+
+  api:
+    image: ${BACKEND_IMAGE:-financial-analytics-backend:0.2.0}
+    build: !reset null
+    environment: *production-backend-environment
+    ports: !reset []
+    expose: ["8000"]
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+
+  worker:
+    image: ${BACKEND_IMAGE:-financial-analytics-backend:0.2.0}
+    build: !reset null
+    environment: *production-backend-environment
+    ports: !reset []
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+
+  web:
+    image: ${WEB_IMAGE:-financial-analytics-web:0.2.0}
+    build: !reset null
+    ports: !reset []
+    expose: ["4173"]
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+
+  vllm:
+    ports: !reset []
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 7G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  mailpit:
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M

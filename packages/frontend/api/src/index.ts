@@ -31,6 +31,8 @@ export function isProfileResponse(value: unknown): value is ProfileResponse {
     typeof candidate.timezone === "string" &&
     (candidate.status === "active" || candidate.status === "disabled") &&
     typeof candidate.is_master === "boolean" &&
+    typeof candidate.is_admin === "boolean" &&
+    typeof candidate.email_verified === "boolean" &&
     typeof candidate.created_at === "string"
   );
 }

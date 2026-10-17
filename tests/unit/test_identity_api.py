@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 
 from financial_analytics_api.main import create_app
-from financial_analytics_app.identity import AuthService
+from financial_analytics_app.identity import AuthService, InvitationService
 from financial_analytics_infra.security import HmacSecretProvider, InMemorySlidingWindowRateLimiter
 from financial_analytics_infra.settings import AppEnvironment, Settings
 from tests.fakes_identity import FakeIdentityStore, FakePasswordHashes, MutableClock
@@ -19,9 +19,11 @@ def make_client() -> TestClient:
         cors_origins=["https://app.example.test"],
         _env_file=None,
     )
+    store = FakeIdentityStore()
+    password_hashes = FakePasswordHashes()
     service = AuthService(
-        FakeIdentityStore(),
-        FakePasswordHashes(),
+        store,
+        password_hashes,
         HmacSecretProvider("s" * 32),
         HmacSecretProvider("c" * 32),
         InMemorySlidingWindowRateLimiter(),
@@ -32,7 +34,18 @@ def make_client() -> TestClient:
         return True
 
     return TestClient(
-        create_app(settings, ready, service),
+        create_app(
+            settings,
+            ready,
+            service,
+            invitation_service=InvitationService(
+                store,
+                HmacSecretProvider("e" * 32),
+                password_hashes,
+                public_base_url="https://app.example.test",
+                clock=MutableClock(datetime.now(UTC)),
+            ),
+        ),
         base_url="https://testserver",
     )
 
@@ -151,3 +164,46 @@ def test_identity_input_validation_never_echoes_password() -> None:
         assert invalid.status_code == 422
         assert invalid.json()["code"] == "validation_error"
         assert password not in invalid.text
+
+
+def test_master_manages_allowlist_and_password_reset_is_non_disclosing() -> None:
+    with make_client() as client:
+        assert client.get("/api/v1/admin/allowlist").status_code == 401
+        assert bootstrap(client).status_code == 201
+        csrf = client.cookies.get("fa_csrf")
+        assert csrf is not None
+
+        allowed = client.post(
+            "/api/v1/admin/allowlist",
+            json={"email": "Guest@Example.com"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert allowed.status_code == 201
+        assert allowed.json()["email"] == "guest@example.com"
+        invited = client.post(
+            "/api/v1/admin/invitations",
+            json={"email": "guest@example.com", "is_admin": False},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert invited.status_code == 201
+        assert invited.json()["email"] == "guest@example.com"
+        assert len(client.get("/api/v1/admin/invitations").json()) == 1
+
+        revoked = client.delete(
+            f"/api/v1/admin/allowlist/{allowed.json()['id']}",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert revoked.status_code == 200
+        assert revoked.json()["revoked_at"] is not None
+
+        client.cookies.clear()
+        unknown = client.post(
+            "/api/v1/auth/password-reset/request",
+            json={"email": "unknown@example.com"},
+        )
+        existing = client.post(
+            "/api/v1/auth/password-reset/request",
+            json={"email": "master@example.com"},
+        )
+        assert unknown.status_code == existing.status_code == 202
+        assert unknown.content == existing.content == b"null"

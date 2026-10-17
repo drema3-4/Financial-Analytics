@@ -10,6 +10,8 @@ const profile = {
   timezone: "Europe/Saratov",
   status: "active",
   is_master: true,
+  is_admin: false,
+  email_verified: true,
   created_at: "2026-10-14T08:00:00Z",
 };
 const account = {

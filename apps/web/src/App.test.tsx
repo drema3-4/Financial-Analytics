@@ -14,6 +14,8 @@ const profile = {
   timezone: "Europe/Saratov",
   status: "active",
   is_master: true,
+  is_admin: false,
+  email_verified: true,
   created_at: "2026-10-14T08:00:00Z",
 };
 
@@ -31,7 +33,40 @@ function fakeApi(overrides: Partial<FinanceApi> = {}): FinanceApi {
   return {
     bootstrapSession: () => Promise.resolve({ kind: "anonymous" }),
     bootstrapMaster: () => Promise.resolve(profile),
+    acceptInvitation: () => Promise.resolve(profile),
+    requestPasswordReset: () => Promise.resolve(),
+    confirmPasswordReset: () => Promise.resolve(),
+    confirmEmailVerification: () => Promise.resolve(profile),
     login: () => Promise.resolve(profile),
+    listAllowlist: () => Promise.resolve([]),
+    addAllowlist: (payload) =>
+      Promise.resolve({
+        id: "55555555-5555-4555-8555-555555555555",
+        email: payload.email,
+        added_by: profile.id,
+        created_at: "2026-10-16T08:00:00Z",
+        revoked_at: null,
+      }),
+    revokeAllowlist: (entryId) =>
+      Promise.resolve({
+        id: entryId,
+        email: "guest@example.com",
+        added_by: profile.id,
+        created_at: "2026-10-16T08:00:00Z",
+        revoked_at: "2026-10-16T09:00:00Z",
+      }),
+    listInvitations: () => Promise.resolve([]),
+    createInvitation: (payload) =>
+      Promise.resolve({
+        id: "66666666-6666-4666-8666-666666666666",
+        email: payload.email,
+        invited_by: profile.id,
+        created_at: "2026-10-16T08:00:00Z",
+        expires_at: "2026-10-16T10:00:00Z",
+        is_admin: payload.is_admin,
+        accepted_at: null,
+        revoked_at: null,
+      }),
     listAccounts: () => Promise.resolve([account]),
     createAccount: () => Promise.resolve(account),
     getDashboard: () =>
@@ -269,5 +304,123 @@ describe("App routes", () => {
     await user.click(screen.getByRole("button", { name: "Выйти" }));
     expect(await screen.findByRole("status")).toHaveTextContent("Вы вышли");
     expect(logout).toHaveBeenCalledOnce();
+  });
+
+  it("accepts an invitation without asking for the invited email", async () => {
+    window.history.replaceState(null, "", "/invite?token=opaque-token");
+    const acceptInvitation = vi.fn<FinanceApi["acceptInvitation"]>(() => Promise.resolve(profile));
+    const user = userEvent.setup();
+    render(<App api={fakeApi({ acceptInvitation })} />);
+
+    expect(await screen.findByRole("heading", { name: "Принять приглашение" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Пароль"), "correct horse battery staple");
+    await user.type(screen.getByLabelText("Повторите пароль"), "correct horse battery staple");
+    await user.click(screen.getByRole("button", { name: "Создать профиль" }));
+
+    expect(await screen.findByRole("heading", { name: "С чего начнём?" })).toBeInTheDocument();
+    expect(acceptInvitation).toHaveBeenCalledOnce();
+    const invitationRequest = acceptInvitation.mock.calls[0]?.[0];
+    expect(invitationRequest?.token).toBe("opaque-token");
+    expect(invitationRequest?.password).toBe("correct horse battery staple");
+    expect(invitationRequest?.base_currency).toBe("RUB");
+    expect(typeof invitationRequest?.locale).toBe("string");
+    expect(typeof invitationRequest?.timezone).toBe("string");
+  });
+
+  it("confirms email only after an explicit action and displays token rejection", async () => {
+    window.history.replaceState(null, "", "/verify-email?token=verification-token");
+    const confirmEmailVerification = vi
+      .fn<FinanceApi["confirmEmailVerification"]>()
+      .mockRejectedValueOnce(new Error("rejected"))
+      .mockResolvedValueOnce(profile);
+    const user = userEvent.setup();
+    render(<App api={fakeApi({ confirmEmailVerification })} />);
+    const button = await screen.findByRole("button", { name: "Подтвердить адрес" });
+    expect(confirmEmailVerification).not.toHaveBeenCalled();
+    await user.click(button);
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    await user.click(button);
+    expect(await screen.findByRole("status")).toHaveTextContent("Email подтверждён");
+    expect(confirmEmailVerification).toHaveBeenCalledWith({ token: "verification-token" });
+  });
+
+  it("uses the same password-reset screen for non-disclosing request and confirmation", async () => {
+    const requestPasswordReset = vi.fn(() => Promise.resolve());
+    const confirmPasswordReset = vi.fn(() => Promise.resolve());
+    const user = userEvent.setup();
+    window.history.replaceState(null, "", "/reset-password");
+    const first = render(<App api={fakeApi({ requestPasswordReset, confirmPasswordReset })} />);
+
+    await user.type(await screen.findByLabelText("Email"), "missing@example.com");
+    await user.click(screen.getByRole("button", { name: "Продолжить" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Если аккаунт существует");
+    expect(requestPasswordReset).toHaveBeenCalledWith({ email: "missing@example.com" });
+
+    first.unmount();
+    window.history.replaceState(null, "", "/reset-password?token=reset-token");
+    render(<App api={fakeApi({ requestPasswordReset, confirmPasswordReset })} />);
+    await user.type(await screen.findByLabelText("Новый пароль"), "new correct horse battery");
+    await user.click(screen.getByRole("button", { name: "Продолжить" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Пароль изменён");
+    expect(confirmPasswordReset).toHaveBeenCalledWith({
+      token: "reset-token",
+      new_password: "new correct horse battery",
+    });
+  });
+
+  it("lets the master invite and revoke access while showing preserved-data copy", async () => {
+    const entry = {
+      id: "55555555-5555-4555-8555-555555555555",
+      email: "guest@example.com",
+      added_by: profile.id,
+      created_at: "2026-10-16T08:00:00Z",
+      revoked_at: null,
+    };
+    const addAllowlist = vi.fn(() => Promise.resolve(entry));
+    const createInvitation = vi.fn(() =>
+      Promise.resolve({
+        id: "66666666-6666-4666-8666-666666666666",
+        email: entry.email,
+        invited_by: profile.id,
+        created_at: entry.created_at,
+        expires_at: "2026-10-16T10:00:00Z",
+        is_admin: true,
+        accepted_at: null,
+        revoked_at: null,
+      }),
+    );
+    const revokeAllowlist = vi.fn(() =>
+      Promise.resolve({ ...entry, revoked_at: "2026-10-16T09:00:00Z" }),
+    );
+    window.history.replaceState(null, "", "/app/access");
+    const api = fakeApi({
+      bootstrapSession: () =>
+        Promise.resolve({ kind: "authenticated", profile, accounts: [account] }),
+      listAllowlist: () => Promise.resolve([entry]),
+      listInvitations: () => Promise.resolve([]),
+      addAllowlist,
+      createInvitation,
+      revokeAllowlist,
+    });
+    const user = userEvent.setup();
+    render(<App api={api} />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Доступ по приглашениям" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/не удаляет профиль/u)).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Email нового пользователя"), "admin@example.com");
+    await user.click(screen.getByLabelText("Разрешить управление приглашениями"));
+    await user.click(screen.getByRole("button", { name: "Разрешить и отправить приглашение" }));
+    await waitFor(() => {
+      expect(createInvitation).toHaveBeenCalledWith({
+        email: "admin@example.com",
+        is_admin: true,
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "Отозвать" }));
+    await waitFor(() => {
+      expect(revokeAllowlist).toHaveBeenCalledWith(entry.id);
+    });
   });
 });

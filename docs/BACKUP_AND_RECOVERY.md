@@ -8,6 +8,11 @@ must encrypt backups at rest, restrict read access, verify retention and keep an
 
 Without WAL archiving, the assumed schedule is one successful daily backup:
 
+For the chosen server, schedule it at **02:00 UTC daily**, keep the Sunday archive as the weekly
+copy, and run an isolated restore verification at least monthly and before each migration.
+Alert on a failed run or a missing successful archive within 24 hours. Scheduler/storage setup
+belongs to that host's operator; this repository does not claim an off-host schedule is active.
+
 - RPO: at most 24 hours, plus transactions since the last completed backup;
 - RTO target: 60 minutes for the MVP dataset, including integrity checks and restart;
 - restore compatibility: the same PostgreSQL major client/server, currently 18;

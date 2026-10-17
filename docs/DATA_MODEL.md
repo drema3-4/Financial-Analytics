@@ -1,6 +1,6 @@
 # Модель данных
 
-Этапы 02–08 реализуют double-entry ledger как единственный источник фактических остатков.
+Этапы 02–13 реализуют double-entry ledger как единственный источник фактических остатков.
 Проведённая операция неизменяема; исправление — новая reversal transaction с причинными
 ссылками. В таблицах нет доверенного «UI balance»: любой остаток перестраивается суммой
 `postings.amount`.
@@ -21,6 +21,12 @@ erDiagram
     USERS ||--o{ DEPOSIT_TERMS : owns
     USERS ||--o{ FORECAST_SCENARIOS : owns
     USERS ||--o{ FINANCIAL_GOALS : owns
+    USERS ||--o{ SESSIONS : authenticates
+    USERS ||--o{ EMAIL_TOKENS : receives
+    USERS ||--o{ EMAIL_ALLOWLIST : administers
+    USERS ||--o{ INVITATIONS : issues
+    INVITATIONS ||--o{ EMAIL_TOKENS : authorizes
+    EMAIL_TOKENS ||--o| EMAIL_DELIVERY_JOBS : delivers
     CATEGORY_GROUPS o|--o{ CATEGORY_GROUPS : parent
     CATEGORY_GROUPS o|--o{ CATEGORIES : groups
     CATEGORIES o|--o{ TRANSACTIONS : classifies
@@ -39,6 +45,10 @@ erDiagram
 
     USERS {
         uuid id PK
+        varchar status
+        boolean is_master
+        boolean is_admin
+        timestamptz email_verified_at
         timestamptz created_at
     }
     ACCOUNTS {
@@ -240,6 +250,19 @@ currency FK. `ForecastInputSnapshot`, timeline и results в БД не сохр�
 6. Ledger idempotency key совпадает с outbox dedup key. Crash после transaction commit до
    job acknowledgement приводит к replay той же transaction, а не к новой проводке.
 
+## Identity and email invariants
+
+1. `email_allowlist` uses soft revoke. Revocation may disable a matching non-master `users` row
+   and revoke sessions/tokens, but no user-owned financial row is deleted or reassigned.
+2. `email_tokens` stores only a keyed digest and exactly one user/invitation subject. Consumption
+   is atomic under row lock; consumed, expired or revoked tokens cannot be replayed.
+3. `email_delivery_jobs` is a separate leased outbox. It references one token, retries at most
+   five times, and clears `text_body` after successful SMTP delivery.
+4. Master/admin authorization is checked in the application service. Only master can set an
+   invited user's `is_admin`; the partial unique index still permits exactly one master.
+5. Invitation acceptance checks active allowlist, unused invitation/token, expiry and unique
+   normalized credential in one transaction before creating the tenant root.
+
 ## Deposit invariants
 
 1. Deposit и principal account имеют одного owner/currency; principal account имеет kind
@@ -302,7 +325,7 @@ scope, составных owner FK и integration tests с двумя владе
 
 ## Миграции и downgrade
 
-`20261014_0010` применяется на чистую БД и проверяется `alembic check`. Downgrade до
+`20261016_0011` применяется на чистую БД и проверяется `alembic check`. Downgrade до
 `20261013_0001` удаляет финансовую схему и поэтому тестируется только на пустой disposable
 database. Для БД с реальными данными такой downgrade разрушителен и не является рабочей
 процедурой отката; используется forward fix/backup restore.

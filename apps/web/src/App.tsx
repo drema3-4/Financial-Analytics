@@ -11,8 +11,10 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   AccountResponse,
+  AllowlistResponse,
   BootstrapRequest,
   CreateAccountRequest,
+  InvitationResponse,
   ProfileResponse,
 } from "@financial-analytics/api-contracts";
 
@@ -90,7 +92,13 @@ function Application({ api }: { api: FinanceApi }) {
         if (!active) return;
         if (session.kind === "anonymous") {
           setState({ status: "anonymous" });
-          if (initialPath.current !== "/login" && initialPath.current !== "/start") {
+          if (
+            initialPath.current !== "/login" &&
+            initialPath.current !== "/start" &&
+            initialPath.current !== "/invite" &&
+            initialPath.current !== "/verify-email" &&
+            initialPath.current !== "/reset-password"
+          ) {
             navigate("/login", { replace: true });
           }
           return;
@@ -100,7 +108,10 @@ function Application({ api }: { api: FinanceApi }) {
           profile: session.profile,
           accounts: session.accounts,
         });
-        if (session.accounts.length === 0) {
+        if (
+          session.accounts.length === 0 &&
+          !["/verify-email", "/reset-password"].includes(initialPath.current)
+        ) {
           navigate("/onboarding/account", { replace: true });
         } else if (
           initialPath.current === "/" ||
@@ -151,7 +162,26 @@ function Application({ api }: { api: FinanceApi }) {
     );
   }
 
+  if (path === "/verify-email") {
+    return <EmailVerificationPage api={api} navigate={navigate} />;
+  }
+  if (path === "/reset-password") {
+    return <PasswordResetPage api={api} navigate={navigate} />;
+  }
+
   if (state.status === "anonymous") {
+    if (path === "/invite") {
+      return (
+        <InvitationAcceptancePage
+          api={api}
+          navigate={navigate}
+          onAuthenticated={(profile) => {
+            setState({ status: "authenticated", profile, accounts: [] });
+            navigate("/onboarding/account", { replace: true });
+          }}
+        />
+      );
+    }
     if (path === "/start") {
       return (
         <FirstRunPage
@@ -207,16 +237,20 @@ function Application({ api }: { api: FinanceApi }) {
       }}
       profile={state.profile}
     >
-      <FinanceWorkspace
-        accounts={state.accounts}
-        api={api}
-        navigate={navigate}
-        onAccountsChanged={(accounts) => {
-          setState({ ...state, accounts });
-        }}
-        path={path === "/" ? "/app/dashboard" : path}
-        profile={state.profile}
-      />
+      {path === "/app/access" && (state.profile.is_master || state.profile.is_admin) ? (
+        <AccessManagementPage api={api} profile={state.profile} />
+      ) : (
+        <FinanceWorkspace
+          accounts={state.accounts}
+          api={api}
+          navigate={navigate}
+          onAccountsChanged={(accounts) => {
+            setState({ ...state, accounts });
+          }}
+          path={path === "/" ? "/app/dashboard" : path}
+          profile={state.profile}
+        />
+      )}
     </AppShell>
   );
 }
@@ -300,6 +334,264 @@ function LoginPage({
           Это первый запуск?{" "}
           <RouteLink navigate={navigate} to="/start">
             Настроить пространство
+          </RouteLink>
+        </p>
+        <p className="auth-switch">
+          Не получается войти?{" "}
+          <RouteLink navigate={navigate} to="/reset-password">
+            Восстановить пароль
+          </RouteLink>
+        </p>
+      </section>
+    </GuestLayout>
+  );
+}
+
+function InvitationAcceptancePage({
+  api,
+  navigate,
+  onAuthenticated,
+}: {
+  api: FinanceApi;
+  navigate: Navigate;
+  onAuthenticated: (profile: ProfileResponse) => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [currency, setCurrency] = useState<(typeof currencies)[number]>("RUB");
+  const [locale, setLocale] = useState(defaultLocale);
+  const [timezone, setTimezone] = useState(defaultTimezone);
+  const [error, setError] = useState<string>();
+  const [pending, setPending] = useState(false);
+  const token = new URLSearchParams(window.location.search).get("token") ?? "";
+
+  async function submit(event: SyntheticEvent<HTMLFormElement, SubmitEvent>) {
+    event.preventDefault();
+    if (token === "") {
+      setError("В ссылке отсутствует токен приглашения.");
+      return;
+    }
+    if (password !== confirmation) {
+      setError("Пароли не совпадают.");
+      return;
+    }
+    setPending(true);
+    setError(undefined);
+    try {
+      const profile = await api.acceptInvitation({
+        token,
+        password,
+        base_currency: currency,
+        locale,
+        timezone,
+      });
+      onAuthenticated(profile);
+    } catch (submitError: unknown) {
+      setError(apiErrorMessage(submitError));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <GuestLayout kicker="Доступ по приглашению" title="Создайте личный профиль.">
+      <section className="auth-panel auth-panel--wide" aria-labelledby="invite-title">
+        <p className="eyebrow">Одноразовая ссылка</p>
+        <h1 id="invite-title">Принять приглашение</h1>
+        <form className="form-stack" onSubmit={(event) => void submit(event)}>
+          <div className="form-grid">
+            <InputField
+              autoComplete="new-password"
+              label="Пароль"
+              minLength={12}
+              onChange={(event) => {
+                setPassword(event.target.value);
+              }}
+              required
+              type="password"
+              value={password}
+            />
+            <InputField
+              autoComplete="new-password"
+              label="Повторите пароль"
+              onChange={(event) => {
+                setConfirmation(event.target.value);
+              }}
+              required
+              type="password"
+              value={confirmation}
+            />
+          </div>
+          <div className="form-grid">
+            <SelectField
+              label="Основная валюта"
+              onChange={(event) => {
+                setCurrency(event.target.value as (typeof currencies)[number]);
+              }}
+              value={currency}
+            >
+              {currencies.map((code) => (
+                <option key={code}>{code}</option>
+              ))}
+            </SelectField>
+            <InputField
+              label="Locale"
+              onChange={(event) => {
+                setLocale(event.target.value);
+              }}
+              value={locale}
+            />
+          </div>
+          <InputField
+            label="Часовой пояс"
+            onChange={(event) => {
+              setTimezone(event.target.value);
+            }}
+            required
+            value={timezone}
+          />
+          {error === undefined ? null : (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+          <Button className="button--wide" loading={pending} type="submit">
+            Создать профиль
+          </Button>
+        </form>
+        <p className="auth-switch">
+          <RouteLink navigate={navigate} to="/login">
+            Вернуться ко входу
+          </RouteLink>
+        </p>
+      </section>
+    </GuestLayout>
+  );
+}
+
+function EmailVerificationPage({ api, navigate }: { api: FinanceApi; navigate: Navigate }) {
+  const token = new URLSearchParams(window.location.search).get("token") ?? "";
+  const [pending, setPending] = useState(false);
+  const [verified, setVerified] = useState(false);
+  const [error, setError] = useState<string>();
+
+  async function confirm() {
+    setPending(true);
+    setError(undefined);
+    try {
+      await api.confirmEmailVerification({ token });
+      setVerified(true);
+    } catch (confirmationError: unknown) {
+      setError(apiErrorMessage(confirmationError));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <GuestLayout kicker="Одноразовая ссылка" title="Подтверждение email.">
+      <section className="auth-panel" aria-labelledby="verify-title">
+        <h1 id="verify-title">Подтвердить email</h1>
+        {verified ? (
+          <p role="status">Email подтверждён. Можно вернуться в пространство.</p>
+        ) : (
+          <Button
+            disabled={token === ""}
+            loading={pending}
+            onClick={() => {
+              void confirm();
+            }}
+          >
+            Подтвердить адрес
+          </Button>
+        )}
+        {error === undefined ? null : (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+        <p className="auth-switch">
+          <RouteLink navigate={navigate} to="/login">
+            Вернуться ко входу
+          </RouteLink>
+        </p>
+      </section>
+    </GuestLayout>
+  );
+}
+
+function PasswordResetPage({ api, navigate }: { api: FinanceApi; navigate: Navigate }) {
+  const token = new URLSearchParams(window.location.search).get("token") ?? "";
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState<string>();
+  const [error, setError] = useState<string>();
+  const [pending, setPending] = useState(false);
+
+  async function submit(event: SyntheticEvent<HTMLFormElement, SubmitEvent>) {
+    event.preventDefault();
+    setPending(true);
+    setError(undefined);
+    try {
+      if (token === "") {
+        await api.requestPasswordReset({ email });
+        setMessage("Если аккаунт существует, письмо со ссылкой уже поставлено в очередь.");
+      } else {
+        await api.confirmPasswordReset({ token, new_password: password });
+        setMessage("Пароль изменён. Все прежние сессии завершены.");
+      }
+    } catch (submitError: unknown) {
+      setError(apiErrorMessage(submitError));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <GuestLayout kicker="Без раскрытия аккаунтов" title="Восстановление доступа.">
+      <section className="auth-panel" aria-labelledby="reset-title">
+        <h1 id="reset-title">{token === "" ? "Запросить ссылку" : "Задать новый пароль"}</h1>
+        <form className="form-stack" onSubmit={(event) => void submit(event)}>
+          {token === "" ? (
+            <InputField
+              label="Email"
+              onChange={(event) => {
+                setEmail(event.target.value);
+              }}
+              required
+              type="email"
+              value={email}
+            />
+          ) : (
+            <InputField
+              autoComplete="new-password"
+              label="Новый пароль"
+              minLength={12}
+              onChange={(event) => {
+                setPassword(event.target.value);
+              }}
+              required
+              type="password"
+              value={password}
+            />
+          )}
+          {message === undefined ? null : (
+            <p className="inline-notice" role="status">
+              {message}
+            </p>
+          )}
+          {error === undefined ? null : (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+          <Button className="button--wide" loading={pending} type="submit">
+            Продолжить
+          </Button>
+        </form>
+        <p className="auth-switch">
+          <RouteLink navigate={navigate} to="/login">
+            Вернуться ко входу
           </RouteLink>
         </p>
       </section>
@@ -676,6 +968,184 @@ function AccountSetupPage({
   );
 }
 
+function AccessManagementPage({ api, profile }: { api: FinanceApi; profile: ProfileResponse }) {
+  const { announce } = useToast();
+  const [allowlist, setAllowlist] = useState<AllowlistResponse[]>([]);
+  const [invitations, setInvitations] = useState<InvitationResponse[]>([]);
+  const [email, setEmail] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const reload = useCallback(async () => {
+    const [allowed, issued] = await Promise.all([api.listAllowlist(), api.listInvitations()]);
+    setAllowlist(allowed);
+    setInvitations(issued);
+  }, [api]);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([api.listAllowlist(), api.listInvitations()])
+      .then(([allowed, issued]) => {
+        if (active) {
+          setAllowlist(allowed);
+          setInvitations(issued);
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (active) setError(apiErrorMessage(loadError));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [api]);
+
+  async function invite(event: SyntheticEvent<HTMLFormElement, SubmitEvent>) {
+    event.preventDefault();
+    setPending(true);
+    setError(undefined);
+    try {
+      await api.addAllowlist({ email });
+      await api.createInvitation({ email, is_admin: profile.is_master && isAdmin });
+      setEmail("");
+      setIsAdmin(false);
+      await reload();
+      announce("Email разрешён, приглашение поставлено в очередь SMTP.", "success");
+    } catch (submitError: unknown) {
+      setError(apiErrorMessage(submitError));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function revoke(entry: AllowlistResponse) {
+    setPending(true);
+    setError(undefined);
+    try {
+      await api.revokeAllowlist(entry.id);
+      await reload();
+      announce("Доступ отозван. Финансовые данные сохранены.", "success");
+    } catch (submitError: unknown) {
+      setError(apiErrorMessage(submitError));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (loading) return <LoadingState label="Загружаем список доступа" />;
+
+  return (
+    <section className="finance-section" aria-labelledby="access-title">
+      <header className="section-heading">
+        <div>
+          <p className="eyebrow">Администрирование</p>
+          <h1 id="access-title">Доступ по приглашениям</h1>
+          <p>Отзыв блокирует вход и ссылки, но не удаляет профиль, аудит или финансовые данные.</p>
+        </div>
+      </header>
+      <form className="access-panel form-stack" onSubmit={(event) => void invite(event)}>
+        <InputField
+          label="Email нового пользователя"
+          onChange={(event) => {
+            setEmail(event.target.value);
+          }}
+          required
+          type="email"
+          value={email}
+        />
+        {profile.is_master ? (
+          <label className="consent-row">
+            <input
+              checked={isAdmin}
+              onChange={(event) => {
+                setIsAdmin(event.target.checked);
+              }}
+              type="checkbox"
+            />
+            Разрешить управление приглашениями
+          </label>
+        ) : null}
+        {error === undefined ? null : (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+        <Button loading={pending} type="submit">
+          Разрешить и отправить приглашение
+        </Button>
+      </form>
+      <section className="access-panel" aria-labelledby="allowlist-title">
+        <h2 id="allowlist-title">Allowlist</h2>
+        <div className="data-table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Состояние</th>
+                <th>Действие</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allowlist.map((entry) => (
+                <tr key={entry.id}>
+                  <td>{entry.email}</td>
+                  <td>{entry.revoked_at === null ? "Разрешён" : "Отозван"}</td>
+                  <td>
+                    {entry.revoked_at === null ? (
+                      <Button
+                        disabled={pending}
+                        onClick={() => void revoke(entry)}
+                        variant="secondary"
+                      >
+                        Отозвать
+                      </Button>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="access-panel" aria-labelledby="invitations-title">
+        <h2 id="invitations-title">Приглашения</h2>
+        <div className="data-table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Роль</th>
+                <th>Состояние</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invitations.map((invitation) => (
+                <tr key={invitation.id}>
+                  <td>{invitation.email}</td>
+                  <td>{invitation.is_admin ? "Администратор" : "Пользователь"}</td>
+                  <td>
+                    {invitation.accepted_at !== null
+                      ? "Принято"
+                      : invitation.revoked_at !== null
+                        ? "Отозвано"
+                        : "Ожидает"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  );
+}
+
 function AppShell({
   children,
   navigate,
@@ -724,6 +1194,7 @@ function AppShell({
             ["/app/forecast", "↗", "Прогноз"],
             ["/app/goals", "◎", "Цели"],
             ["/app/advice", "✦", "Советник"],
+            ...(profile.is_master || profile.is_admin ? [["/app/access", "⚿", "Доступ"]] : []),
           ].map(([to, icon, label]) => (
             <RouteLink
               className={`nav-link ${path === to ? "is-active" : ""}`}
@@ -840,6 +1311,12 @@ function AppShell({
           <div>
             <dt>Часовой пояс</dt>
             <dd>{profile.timezone}</dd>
+          </div>
+          <div>
+            <dt>Роль</dt>
+            <dd>
+              {profile.is_master ? "Мастер" : profile.is_admin ? "Администратор" : "Пользователь"}
+            </dd>
           </div>
         </dl>
         <Button

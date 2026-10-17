@@ -5,8 +5,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Protocol
+from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
+from financial_analytics_app.mail import EmailDeliveryJob, EmailJobState
 from financial_analytics_domain import (
     Currency,
     EmailAddress,
@@ -54,6 +56,10 @@ class EmailNotAllowedError(IdentityError):
 
 
 class EmailTokenInvalidError(IdentityError):
+    pass
+
+
+class AccessManagementDeniedError(IdentityError):
     pass
 
 
@@ -135,6 +141,8 @@ class IdentityStore(Protocol):
 
     def get_profile(self, user_id: UUID) -> UserProfile | None: ...
 
+    def find_profile_by_email(self, email: EmailAddress) -> UserProfile | None: ...
+
     def replace_password_hash(self, user_id: UUID, password_hash: str, now: Instant) -> None: ...
 
     def create_session(
@@ -168,7 +176,20 @@ class IdentityStore(Protocol):
         self, owner_id: UUID, *, now: Instant, request_id: UUID | None
     ) -> int: ...
 
-    def add_allowlist_entry(self, entry: AllowlistEntry, *, request_id: UUID | None) -> None: ...
+    def add_allowlist_entry(
+        self, entry: AllowlistEntry, *, request_id: UUID | None
+    ) -> AllowlistEntry: ...
+
+    def list_allowlist_entries(self) -> tuple[AllowlistEntry, ...]: ...
+
+    def revoke_allowlist_entry(
+        self,
+        entry_id: UUID,
+        *,
+        actor_id: UUID,
+        now: Instant,
+        request_id: UUID | None,
+    ) -> AllowlistEntry | None: ...
 
     def is_email_allowed(self, email: EmailAddress) -> bool: ...
 
@@ -177,12 +198,50 @@ class IdentityStore(Protocol):
         invitation: Invitation,
         token: EmailToken,
         *,
+        email_job: EmailDeliveryJob | None = None,
         request_id: UUID | None,
     ) -> None: ...
 
+    def list_invitations(self) -> tuple[Invitation, ...]: ...
+
     def create_email_token(
-        self, token: EmailToken, *, actor_id: UUID, request_id: UUID | None
+        self,
+        token: EmailToken,
+        *,
+        actor_id: UUID,
+        email_job: EmailDeliveryJob | None = None,
+        request_id: UUID | None,
     ) -> None: ...
+
+    def accept_invitation(
+        self,
+        token_id: UUID,
+        token_hash: str,
+        *,
+        profile: UserProfile,
+        password_hash: str,
+        now: Instant,
+        request_id: UUID | None,
+    ) -> UserProfile | None: ...
+
+    def verify_email(
+        self,
+        token_id: UUID,
+        token_hash: str,
+        *,
+        now: Instant,
+        request_id: UUID | None,
+    ) -> UserProfile | None: ...
+
+    def reset_password(
+        self,
+        token_id: UUID,
+        token_hash: str,
+        *,
+        password_hash: str,
+        now: Instant,
+        request_id: UUID | None,
+    ) -> UserProfile | None: ...
 
     def consume_email_token(
         self,
@@ -219,6 +278,7 @@ class AuthService:
         csrf_secrets: SecretProvider,
         rate_limiter: RateLimiter,
         *,
+        bootstrap_master_email: str | None = None,
         clock: Callable[[], Instant] = Instant.now,
         uuid_factory: Callable[[], UUID] = uuid4,
     ) -> None:
@@ -227,6 +287,9 @@ class AuthService:
         self._session_secrets = session_secrets
         self._csrf_secrets = csrf_secrets
         self._rate_limiter = rate_limiter
+        self._bootstrap_master_email = (
+            None if bootstrap_master_email is None else EmailAddress(bootstrap_master_email)
+        )
         self._clock = clock
         self._uuid_factory = uuid_factory
         self._dummy_password_hash = password_hashes.hash(session_secrets.generate())
@@ -243,15 +306,22 @@ class AuthService:
     ) -> SessionTokens:
         validate_password(password)
         now = self._clock()
+        normalized_email = EmailAddress(email)
+        if (
+            self._bootstrap_master_email is not None
+            and normalized_email != self._bootstrap_master_email
+        ):
+            raise BootstrapClosedError("master bootstrap email is not authorized")
         profile = UserProfile(
             id=self._uuid_factory(),
-            email=EmailAddress(email),
+            email=normalized_email,
             base_currency=Currency(base_currency),
             locale=locale,
             timezone=timezone,
             status=UserStatus.ACTIVE,
             is_master=True,
             created_at=now,
+            email_verified_at=now,
         )
         password_hash = self._password_hashes.hash(password)
         self._store.create_master(
@@ -455,36 +525,73 @@ class AuthService:
 
 
 class InvitationService:
-    TOKEN_TTL = timedelta(hours=24)
+    INVITATION_TTL = timedelta(hours=2)
+    VERIFICATION_TTL = timedelta(minutes=30)
+    PASSWORD_RESET_TTL = timedelta(minutes=15)
 
     def __init__(
         self,
         store: IdentityStore,
         token_secrets: SecretProvider,
+        password_hashes: PasswordHashProvider | None = None,
         *,
+        public_base_url: str | None = None,
         clock: Callable[[], Instant] = Instant.now,
         uuid_factory: Callable[[], UUID] = uuid4,
     ) -> None:
         self._store = store
         self._token_secrets = token_secrets
+        self._password_hashes = password_hashes
+        self._public_base_url = None if public_base_url is None else public_base_url.rstrip("/")
         self._clock = clock
         self._uuid_factory = uuid_factory
 
     def allow_email(
         self, email: str, *, actor_id: UUID, request_id: UUID | None = None
     ) -> AllowlistEntry:
+        self._require_access_manager(actor_id)
         entry = AllowlistEntry(
             id=self._uuid_factory(),
             email=EmailAddress(email),
             added_by=actor_id,
             created_at=self._clock(),
         )
-        self._store.add_allowlist_entry(entry, request_id=request_id)
-        return entry
+        return self._store.add_allowlist_entry(entry, request_id=request_id)
+
+    def list_allowlist(self, *, actor_id: UUID) -> tuple[AllowlistEntry, ...]:
+        self._require_access_manager(actor_id)
+        return self._store.list_allowlist_entries()
+
+    def revoke_allowlist(
+        self,
+        entry_id: UUID,
+        *,
+        actor_id: UUID,
+        request_id: UUID | None = None,
+    ) -> AllowlistEntry | None:
+        self._require_access_manager(actor_id)
+        return self._store.revoke_allowlist_entry(
+            entry_id,
+            actor_id=actor_id,
+            now=self._clock(),
+            request_id=request_id,
+        )
+
+    def list_invitations(self, *, actor_id: UUID) -> tuple[Invitation, ...]:
+        self._require_access_manager(actor_id)
+        return self._store.list_invitations()
 
     def issue_invitation(
-        self, email: str, *, actor_id: UUID, request_id: UUID | None = None
+        self,
+        email: str,
+        *,
+        actor_id: UUID,
+        is_admin: bool = False,
+        request_id: UUID | None = None,
     ) -> tuple[Invitation, str]:
+        actor = self._require_access_manager(actor_id)
+        if is_admin and not actor.is_master:
+            raise AccessManagementDeniedError("only master can invite an admin")
         normalized = EmailAddress(email)
         if not self._store.is_email_allowed(normalized):
             raise EmailNotAllowedError("email is not on the allowlist")
@@ -494,7 +601,8 @@ class InvitationService:
             email=normalized,
             invited_by=actor_id,
             created_at=now,
-            expires_at=Instant(now.value + self.TOKEN_TTL),
+            expires_at=Instant(now.value + self.INVITATION_TTL),
+            is_admin=is_admin,
         )
         secret = self._token_secrets.generate()
         token = EmailToken(
@@ -505,8 +613,20 @@ class InvitationService:
             created_at=now,
             expires_at=invitation.expires_at,
         )
-        self._store.create_invitation(invitation, token, request_id=request_id)
-        return invitation, _format_opaque_token(token.id, secret)
+        raw_token = _format_opaque_token(token.id, secret)
+        self._store.create_invitation(
+            invitation,
+            token,
+            email_job=self._email_job(
+                token,
+                normalized,
+                raw_token,
+                subject="Приглашение в Financial Analytics",
+                route="invite",
+            ),
+            request_id=request_id,
+        )
+        return invitation, raw_token
 
     def consume_invitation(self, raw_token: str, *, request_id: UUID | None = None) -> EmailToken:
         return self._consume(raw_token, EmailTokenPurpose.INVITATION, request_id=request_id)
@@ -521,8 +641,12 @@ class InvitationService:
     ) -> tuple[EmailToken, str]:
         if purpose is EmailTokenPurpose.INVITATION:
             raise ValueError("invitation tokens require an invitation subject")
-        if self._store.get_profile(user_id) is None:
+        profile = self._store.get_profile(user_id)
+        if profile is None:
             raise ValueError("email token user does not exist")
+        actor = self._store.get_profile(actor_id)
+        if actor is None or (actor.id != user_id and not actor.can_manage_access):
+            raise AccessManagementDeniedError("email token actor is not authorized")
         now = self._clock()
         secret = self._token_secrets.generate()
         token = EmailToken(
@@ -531,10 +655,123 @@ class InvitationService:
             token_hash=self._token_secrets.digest(secret),
             user_id=user_id,
             created_at=now,
-            expires_at=Instant(now.value + self.TOKEN_TTL),
+            expires_at=Instant(now.value + self._ttl_for(purpose)),
         )
-        self._store.create_email_token(token, actor_id=actor_id, request_id=request_id)
-        return token, _format_opaque_token(token.id, secret)
+        raw_token = _format_opaque_token(token.id, secret)
+        subject, route = {
+            EmailTokenPurpose.VERIFY_EMAIL: (
+                "Подтверждение email Financial Analytics",
+                "verify-email",
+            ),
+            EmailTokenPurpose.RESET_PASSWORD: (
+                "Восстановление пароля Financial Analytics",
+                "reset-password",
+            ),
+        }[purpose]
+        self._store.create_email_token(
+            token,
+            actor_id=actor_id,
+            email_job=self._email_job(
+                token,
+                profile.email,
+                raw_token,
+                subject=subject,
+                route=route,
+            ),
+            request_id=request_id,
+        )
+        return token, raw_token
+
+    def accept_invitation(
+        self,
+        raw_token: str,
+        *,
+        password: str,
+        base_currency: str,
+        locale: str,
+        timezone: str,
+        request_id: UUID | None = None,
+    ) -> UserProfile:
+        validate_password(password)
+        password_hashes = self._require_password_hashes()
+        token_id, digest = self._parse_email_token(raw_token)
+        now = self._clock()
+        profile = UserProfile(
+            id=self._uuid_factory(),
+            email=EmailAddress("pending-invitation@example.invalid"),
+            base_currency=Currency(base_currency),
+            locale=locale,
+            timezone=timezone,
+            status=UserStatus.ACTIVE,
+            is_master=False,
+            created_at=now,
+            email_verified_at=now,
+        )
+        accepted = self._store.accept_invitation(
+            token_id,
+            digest,
+            profile=profile,
+            password_hash=password_hashes.hash(password),
+            now=now,
+            request_id=request_id,
+        )
+        if accepted is None:
+            raise EmailTokenInvalidError("email token is invalid, expired, or already consumed")
+        return accepted
+
+    def request_email_verification(self, user_id: UUID, *, request_id: UUID | None = None) -> None:
+        profile = self._store.get_profile(user_id)
+        if profile is None or profile.email_verified_at is not None:
+            return
+        self.issue_user_token(
+            user_id,
+            EmailTokenPurpose.VERIFY_EMAIL,
+            actor_id=user_id,
+            request_id=request_id,
+        )
+
+    def verify_email(self, raw_token: str, *, request_id: UUID | None = None) -> UserProfile:
+        token_id, digest = self._parse_email_token(raw_token)
+        profile = self._store.verify_email(
+            token_id,
+            digest,
+            now=self._clock(),
+            request_id=request_id,
+        )
+        if profile is None:
+            raise EmailTokenInvalidError("email token is invalid, expired, or already consumed")
+        return profile
+
+    def request_password_reset(self, email: str, *, request_id: UUID | None = None) -> None:
+        profile = self._store.find_profile_by_email(EmailAddress(email))
+        if profile is None or not profile.enabled:
+            return
+        self.issue_user_token(
+            profile.id,
+            EmailTokenPurpose.RESET_PASSWORD,
+            actor_id=profile.id,
+            request_id=request_id,
+        )
+
+    def reset_password(
+        self,
+        raw_token: str,
+        *,
+        new_password: str,
+        request_id: UUID | None = None,
+    ) -> UserProfile:
+        validate_password(new_password)
+        token_id, digest = self._parse_email_token(raw_token)
+        profile = self._store.reset_password(
+            token_id,
+            digest,
+            password_hash=self._require_password_hashes().hash(new_password),
+            now=self._clock(),
+            request_id=request_id,
+        )
+        if profile is None:
+            raise EmailTokenInvalidError("email token is invalid, expired, or already consumed")
+        return profile
 
     def consume_user_token(
         self,
@@ -546,6 +783,64 @@ class InvitationService:
         if purpose is EmailTokenPurpose.INVITATION:
             raise ValueError("use consume_invitation for invitation tokens")
         return self._consume(raw_token, purpose, request_id=request_id)
+
+    def _require_access_manager(self, actor_id: UUID) -> UserProfile:
+        profile = self._store.get_profile(actor_id)
+        if profile is None or not profile.enabled or not profile.can_manage_access:
+            raise AccessManagementDeniedError("access management requires master or admin")
+        return profile
+
+    def _require_password_hashes(self) -> PasswordHashProvider:
+        if self._password_hashes is None:
+            raise RuntimeError("password hashing is not configured")
+        return self._password_hashes
+
+    def _parse_email_token(self, raw_token: str) -> tuple[UUID, str]:
+        try:
+            token_id, secret = _parse_opaque_token(raw_token)
+        except InvalidSessionError as error:
+            raise EmailTokenInvalidError(
+                "email token is invalid, expired, or already consumed"
+            ) from error
+        return token_id, self._token_secrets.digest(secret)
+
+    def _email_job(
+        self,
+        token: EmailToken,
+        recipient: EmailAddress,
+        raw_token: str,
+        *,
+        subject: str,
+        route: str,
+    ) -> EmailDeliveryJob | None:
+        if self._public_base_url is None:
+            return None
+        query = urlencode({"token": raw_token})
+        link = f"{self._public_base_url}/{route}?{query}"
+        return EmailDeliveryJob(
+            id=self._uuid_factory(),
+            token_id=token.id,
+            purpose=token.purpose,
+            recipient=recipient.value,
+            subject=subject,
+            text_body=(
+                f"Откройте одноразовую ссылку: {link}\n"
+                f"Ссылка действует до {token.expires_at.value.isoformat()}.\n"
+                "Если вы не запрашивали это действие, проигнорируйте письмо."
+            ),
+            state=EmailJobState.PENDING,
+            attempts=0,
+            available_at=token.created_at,
+            created_at=token.created_at,
+        )
+
+    @classmethod
+    def _ttl_for(cls, purpose: EmailTokenPurpose) -> timedelta:
+        if purpose is EmailTokenPurpose.VERIFY_EMAIL:
+            return cls.VERIFICATION_TTL
+        if purpose is EmailTokenPurpose.RESET_PASSWORD:
+            return cls.PASSWORD_RESET_TTL
+        return cls.INVITATION_TTL
 
     def _consume(
         self,

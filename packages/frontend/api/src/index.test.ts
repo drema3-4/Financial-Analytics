@@ -26,6 +26,8 @@ describe("isProfileResponse", () => {
       timezone: "Europe/Saratov",
       status: "active",
       is_master: true,
+      is_admin: false,
+      email_verified: true,
       created_at: "2026-10-13T00:00:00Z",
     };
     expect(isProfileResponse(profile)).toBe(true);

@@ -171,12 +171,21 @@ non-thinking. Внешний untrusted user text имеет request-scoped conse
 
 ## 10. Compose-профили
 
-- По умолчанию/core: `postgres`, `api`, `worker`, `web`.
-- `mail`: плюс локальный SMTP-catcher.
+- Явный `core`: `postgres`, one-shot `migrate`, `api`, `worker`, `web`.
+- `mail-catcher`: core плюс локальный Mailpit SMTP-catcher.
 - `local-llm`: плюс `vllm` с GPU reservation и постоянным Hugging Face cache.
 - Backend зависит от PostgreSQL, но не зависит по health condition от vLLM.
 
 Все образы и зависимости пинятся; `latest` не допускается в воспроизводимом релизе. Для Windows документируется Docker Desktop с WSL2 backend и GPU passthrough.
+
+`compose.production.yaml` убирает host ports/build instructions и задаёт limits/restart policy.
+TLS и forwarded headers контролирует выбранный reverse proxy; runtime проверяет HTTPS origins,
+Secure cookies, SMTP TLS и identity secrets. Identity mail имеет отдельный durable
+`email_delivery_jobs` outbox: invitation/token и job создаются в одной транзакции, SMTP adapter
+работает вне домена, а worker очищает тело при delivery/terminal state. SMTP допускает повторную
+доставку после crash, но ссылка потребляется атомарно один раз. Администрирование allowlist
+доступно master/admin; revoke сохраняет пользователя, финансовые строки и append-only audit.
+Контракт и эксплуатационные границы закреплены в ADR-023 и `docs/DEPLOYMENT.md`.
 
 ## 11. Проверочная стратегия
 

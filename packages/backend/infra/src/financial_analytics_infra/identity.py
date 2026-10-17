@@ -14,6 +14,7 @@ from financial_analytics_app.identity import (
     EmailNotAllowedError,
     SessionRecord,
 )
+from financial_analytics_app.mail import EmailDeliveryJob
 from financial_analytics_domain import (
     Currency,
     EmailAddress,
@@ -28,6 +29,7 @@ from financial_analytics_infra.models import (
     AuditEventModel,
     CredentialModel,
     EmailAllowlistModel,
+    EmailDeliveryJobModel,
     EmailTokenModel,
     InvitationModel,
     SessionModel,
@@ -67,6 +69,12 @@ class PostgresIdentityStore:
                         id=profile.id,
                         status=profile.status.value,
                         is_master=True,
+                        is_admin=False,
+                        email_verified_at=(
+                            None
+                            if profile.email_verified_at is None
+                            else profile.email_verified_at.value
+                        ),
                         created_at=profile.created_at.value,
                         updated_at=profile.created_at.value,
                     )
@@ -133,6 +141,10 @@ class PostgresIdentityStore:
                 return None
             user, credential, profile = row
             return _profile_from_rows(user, credential, profile)
+
+    def find_profile_by_email(self, email: EmailAddress) -> UserProfile | None:
+        authentication = self.get_authentication(email)
+        return None if authentication is None else authentication.profile
 
     def replace_password_hash(self, user_id: UUID, password_hash: str, now: Instant) -> None:
         with self._sessions.begin() as session:
@@ -281,27 +293,161 @@ class PostgresIdentityStore:
             )
             return changed
 
-    def add_allowlist_entry(self, entry: AllowlistEntry, *, request_id: UUID | None) -> None:
+    def add_allowlist_entry(
+        self, entry: AllowlistEntry, *, request_id: UUID | None
+    ) -> AllowlistEntry:
         with self._sessions.begin() as session:
-            session.add(
-                EmailAllowlistModel(
+            row = session.scalar(
+                select(EmailAllowlistModel)
+                .where(EmailAllowlistModel.email == entry.email.value)
+                .with_for_update()
+            )
+            if row is None:
+                row = EmailAllowlistModel(
                     id=entry.id,
                     email=entry.email.value,
                     added_by=entry.added_by,
                     created_at=entry.created_at.value,
                     revoked_at=None,
                 )
-            )
+                session.add(row)
+                event_type = "identity.allowlist_added"
+            elif row.revoked_at is None:
+                return _allowlist_from_row(row)
+            else:
+                row.added_by = entry.added_by
+                row.created_at = entry.created_at.value
+                row.revoked_at = None
+                credential = session.scalar(
+                    select(CredentialModel).where(CredentialModel.email == entry.email.value)
+                )
+                if credential is not None:
+                    user = session.get(UserModel, credential.user_id)
+                    if user is not None and not user.is_master:
+                        user.status = UserStatus.ACTIVE.value
+                        user.updated_at = entry.created_at.value
+                event_type = "identity.allowlist_reactivated"
             self._audit(
                 session,
                 owner_id=entry.added_by,
                 actor_id=entry.added_by,
-                event_type="identity.allowlist_added",
+                event_type=event_type,
                 aggregate_type="allowlist_entry",
-                aggregate_id=entry.id,
+                aggregate_id=row.id,
                 occurred_at=entry.created_at,
                 request_id=request_id,
             )
+            session.flush()
+            return _allowlist_from_row(row)
+
+    def list_allowlist_entries(self) -> tuple[AllowlistEntry, ...]:
+        with self._sessions() as session:
+            rows = session.scalars(
+                select(EmailAllowlistModel).order_by(
+                    EmailAllowlistModel.created_at.desc(), EmailAllowlistModel.id
+                )
+            ).all()
+            return tuple(_allowlist_from_row(row) for row in rows)
+
+    def revoke_allowlist_entry(
+        self,
+        entry_id: UUID,
+        *,
+        actor_id: UUID,
+        now: Instant,
+        request_id: UUID | None,
+    ) -> AllowlistEntry | None:
+        with self._sessions.begin() as session:
+            row = session.scalar(
+                select(EmailAllowlistModel)
+                .where(EmailAllowlistModel.id == entry_id)
+                .with_for_update()
+            )
+            if row is None:
+                return None
+            if row.revoked_at is None:
+                row.revoked_at = now.value
+                credential = session.scalar(
+                    select(CredentialModel).where(CredentialModel.email == row.email)
+                )
+                owner_id = actor_id
+                if credential is not None:
+                    user = session.get(UserModel, credential.user_id)
+                    if user is not None and not user.is_master:
+                        user.status = UserStatus.DISABLED.value
+                        user.updated_at = now.value
+                        owner_id = user.id
+                        session.execute(
+                            update(SessionModel)
+                            .where(
+                                SessionModel.owner_id == user.id,
+                                SessionModel.revoked_at.is_(None),
+                            )
+                            .values(revoked_at=now.value)
+                        )
+                        session.execute(
+                            update(EmailTokenModel)
+                            .where(
+                                EmailTokenModel.user_id == user.id,
+                                EmailTokenModel.consumed_at.is_(None),
+                                EmailTokenModel.revoked_at.is_(None),
+                            )
+                            .values(revoked_at=now.value)
+                        )
+                invitation_ids = select(InvitationModel.id).where(
+                    InvitationModel.email == row.email,
+                    InvitationModel.accepted_at.is_(None),
+                    InvitationModel.revoked_at.is_(None),
+                )
+                token_ids = select(EmailTokenModel.id).where(
+                    EmailTokenModel.invitation_id.in_(invitation_ids),
+                    EmailTokenModel.consumed_at.is_(None),
+                )
+                session.execute(
+                    update(EmailDeliveryJobModel)
+                    .where(
+                        EmailDeliveryJobModel.token_id.in_(token_ids),
+                        EmailDeliveryJobModel.state.in_(("pending", "leased")),
+                    )
+                    .values(
+                        state="dead_letter",
+                        text_body=None,
+                        lease_owner=None,
+                        leased_until=None,
+                        last_error="AccessRevoked",
+                    )
+                )
+                session.execute(
+                    update(EmailTokenModel)
+                    .where(
+                        EmailTokenModel.invitation_id.in_(invitation_ids),
+                        EmailTokenModel.consumed_at.is_(None),
+                        EmailTokenModel.revoked_at.is_(None),
+                    )
+                    .values(revoked_at=now.value)
+                )
+                session.execute(
+                    update(InvitationModel)
+                    .where(
+                        InvitationModel.email == row.email,
+                        InvitationModel.accepted_at.is_(None),
+                        InvitationModel.revoked_at.is_(None),
+                    )
+                    .values(revoked_at=now.value)
+                )
+                self._audit(
+                    session,
+                    owner_id=owner_id,
+                    actor_id=actor_id,
+                    event_type="identity.allowlist_revoked",
+                    aggregate_type="allowlist_entry",
+                    aggregate_id=row.id,
+                    occurred_at=now,
+                    request_id=request_id,
+                    payload={"financial_data_preserved": True},
+                )
+            session.flush()
+            return _allowlist_from_row(row)
 
     def is_email_allowed(self, email: EmailAddress) -> bool:
         with self._sessions() as session:
@@ -320,6 +466,7 @@ class PostgresIdentityStore:
         invitation: Invitation,
         token: EmailToken,
         *,
+        email_job: EmailDeliveryJob | None = None,
         request_id: UUID | None,
     ) -> None:
         with self._sessions.begin() as session:
@@ -338,10 +485,14 @@ class PostgresIdentityStore:
                     invited_by=invitation.invited_by,
                     created_at=invitation.created_at.value,
                     expires_at=invitation.expires_at.value,
+                    is_admin=invitation.is_admin,
                 )
             )
             session.flush()
             session.add(_email_token_to_row(token))
+            session.flush()
+            if email_job is not None:
+                session.add(_email_job_to_row(email_job))
             self._audit(
                 session,
                 owner_id=invitation.invited_by,
@@ -351,13 +502,31 @@ class PostgresIdentityStore:
                 aggregate_id=invitation.id,
                 occurred_at=invitation.created_at,
                 request_id=request_id,
+                payload={"is_admin": invitation.is_admin},
             )
 
+    def list_invitations(self) -> tuple[Invitation, ...]:
+        with self._sessions() as session:
+            rows = session.scalars(
+                select(InvitationModel).order_by(
+                    InvitationModel.created_at.desc(), InvitationModel.id
+                )
+            ).all()
+            return tuple(_invitation_from_row(row) for row in rows)
+
     def create_email_token(
-        self, token: EmailToken, *, actor_id: UUID, request_id: UUID | None
+        self,
+        token: EmailToken,
+        *,
+        actor_id: UUID,
+        email_job: EmailDeliveryJob | None = None,
+        request_id: UUID | None,
     ) -> None:
         with self._sessions.begin() as session:
             session.add(_email_token_to_row(token))
+            session.flush()
+            if email_job is not None:
+                session.add(_email_job_to_row(email_job))
             self._audit(
                 session,
                 owner_id=actor_id,
@@ -370,6 +539,208 @@ class PostgresIdentityStore:
                 payload={"purpose": token.purpose.value},
             )
 
+    def accept_invitation(
+        self,
+        token_id: UUID,
+        token_hash: str,
+        *,
+        profile: UserProfile,
+        password_hash: str,
+        now: Instant,
+        request_id: UUID | None,
+    ) -> UserProfile | None:
+        with self._sessions.begin() as session:
+            token = session.scalar(
+                select(EmailTokenModel).where(EmailTokenModel.id == token_id).with_for_update()
+            )
+            if token is None:
+                return None
+            invitation = (
+                None
+                if token.invitation_id is None
+                else session.scalar(
+                    select(InvitationModel)
+                    .where(InvitationModel.id == token.invitation_id)
+                    .with_for_update()
+                )
+            )
+            allowed = (
+                invitation is not None
+                and session.scalar(
+                    select(EmailAllowlistModel.id)
+                    .where(
+                        EmailAllowlistModel.email == invitation.email,
+                        EmailAllowlistModel.revoked_at.is_(None),
+                    )
+                    .with_for_update()
+                )
+                is not None
+            )
+            duplicate = (
+                invitation is not None
+                and session.scalar(
+                    select(CredentialModel.user_id).where(CredentialModel.email == invitation.email)
+                )
+                is not None
+            )
+            if (
+                token.purpose != EmailTokenPurpose.INVITATION.value
+                or not hmac.compare_digest(token.token_hash, token_hash)
+                or token.consumed_at is not None
+                or token.revoked_at is not None
+                or token.expires_at <= now.value
+                or invitation is None
+                or invitation.revoked_at is not None
+                or invitation.accepted_at is not None
+                or invitation.expires_at <= now.value
+                or not allowed
+                or duplicate
+            ):
+                self._audit_token_rejection(session, token, now, request_id)
+                return None
+            accepted = UserProfile(
+                id=profile.id,
+                email=EmailAddress(invitation.email),
+                base_currency=profile.base_currency,
+                locale=profile.locale,
+                timezone=profile.timezone,
+                status=UserStatus.ACTIVE,
+                is_master=False,
+                created_at=now,
+                is_admin=invitation.is_admin,
+                email_verified_at=now,
+            )
+            user = UserModel(
+                id=accepted.id,
+                status=accepted.status.value,
+                is_master=False,
+                is_admin=accepted.is_admin,
+                email_verified_at=now.value,
+                created_at=now.value,
+                updated_at=now.value,
+            )
+            session.add(user)
+            session.flush()
+            profile_row = UserProfileModel(
+                user_id=accepted.id,
+                base_currency=accepted.base_currency.code,
+                locale=accepted.locale,
+                timezone=accepted.timezone,
+                created_at=now.value,
+                updated_at=now.value,
+            )
+            credential = CredentialModel(
+                user_id=accepted.id,
+                email=accepted.email.value,
+                password_hash=password_hash,
+                password_changed_at=now.value,
+            )
+            session.add_all((profile_row, credential))
+            token.consumed_at = now.value
+            self._discard_email_job(session, token.id, now)
+            invitation.accepted_at = now.value
+            self._audit(
+                session,
+                owner_id=accepted.id,
+                actor_id=accepted.id,
+                event_type="identity.invitation_accepted",
+                aggregate_type="user",
+                aggregate_id=accepted.id,
+                occurred_at=now,
+                request_id=request_id,
+                payload={"is_admin": accepted.is_admin},
+            )
+            return accepted
+
+    def verify_email(
+        self,
+        token_id: UUID,
+        token_hash: str,
+        *,
+        now: Instant,
+        request_id: UUID | None,
+    ) -> UserProfile | None:
+        with self._sessions.begin() as session:
+            token = self._lock_user_token(
+                session,
+                token_id,
+                token_hash,
+                EmailTokenPurpose.VERIFY_EMAIL,
+                now,
+                request_id,
+            )
+            if token is None or token.user_id is None:
+                return None
+            rows = self._profile_rows(session, token.user_id)
+            if rows is None:
+                return None
+            user, credential, profile_row = rows
+            token.consumed_at = now.value
+            self._discard_email_job(session, token.id, now)
+            user.email_verified_at = now.value
+            user.updated_at = now.value
+            self._audit(
+                session,
+                owner_id=user.id,
+                actor_id=user.id,
+                event_type="identity.email_verified",
+                aggregate_type="user",
+                aggregate_id=user.id,
+                occurred_at=now,
+                request_id=request_id,
+            )
+            session.flush()
+            return _profile_from_rows(user, credential, profile_row)
+
+    def reset_password(
+        self,
+        token_id: UUID,
+        token_hash: str,
+        *,
+        password_hash: str,
+        now: Instant,
+        request_id: UUID | None,
+    ) -> UserProfile | None:
+        with self._sessions.begin() as session:
+            token = self._lock_user_token(
+                session,
+                token_id,
+                token_hash,
+                EmailTokenPurpose.RESET_PASSWORD,
+                now,
+                request_id,
+            )
+            if token is None or token.user_id is None:
+                return None
+            rows = self._profile_rows(session, token.user_id)
+            if rows is None:
+                return None
+            user, credential, profile_row = rows
+            token.consumed_at = now.value
+            self._discard_email_job(session, token.id, now)
+            credential.password_hash = password_hash
+            credential.password_changed_at = now.value
+            session.execute(
+                update(SessionModel)
+                .where(
+                    SessionModel.owner_id == user.id,
+                    SessionModel.revoked_at.is_(None),
+                )
+                .values(revoked_at=now.value)
+            )
+            self._audit(
+                session,
+                owner_id=user.id,
+                actor_id=user.id,
+                event_type="identity.password_reset",
+                aggregate_type="credential",
+                aggregate_id=user.id,
+                occurred_at=now,
+                request_id=request_id,
+            )
+            session.flush()
+            return _profile_from_rows(user, credential, profile_row)
+
     def consume_email_token(
         self,
         token_id: UUID,
@@ -381,20 +752,18 @@ class PostgresIdentityStore:
     ) -> EmailToken | None:
         with self._sessions.begin() as session:
             row = session.scalar(
-                select(EmailTokenModel)
-                .where(
-                    EmailTokenModel.id == token_id,
-                    EmailTokenModel.token_hash == token_hash,
-                    EmailTokenModel.purpose == purpose.value,
-                )
-                .with_for_update()
+                select(EmailTokenModel).where(EmailTokenModel.id == token_id).with_for_update()
             )
             if (
                 row is None
+                or row.purpose != purpose.value
+                or not hmac.compare_digest(row.token_hash, token_hash)
                 or row.consumed_at is not None
                 or row.revoked_at is not None
                 or row.expires_at <= now.value
             ):
+                if row is not None:
+                    self._audit_token_rejection(session, row, now, request_id)
                 return None
             actor_id = row.user_id
             if row.invitation_id is not None:
@@ -416,12 +785,14 @@ class PostgresIdentityStore:
                     )
                     is None
                 ):
+                    self._audit_token_rejection(session, row, now, request_id)
                     return None
                 invitation.accepted_at = now.value
                 actor_id = invitation.invited_by
             if actor_id is None:
                 return None
             row.consumed_at = now.value
+            self._discard_email_job(session, row.id, now)
             self._audit(
                 session,
                 owner_id=actor_id,
@@ -435,6 +806,90 @@ class PostgresIdentityStore:
             )
             session.flush()
             return _email_token_from_row(row)
+
+    def _lock_user_token(
+        self,
+        session: Session,
+        token_id: UUID,
+        token_hash: str,
+        purpose: EmailTokenPurpose,
+        now: Instant,
+        request_id: UUID | None,
+    ) -> EmailTokenModel | None:
+        row = session.scalar(
+            select(EmailTokenModel).where(EmailTokenModel.id == token_id).with_for_update()
+        )
+        if (
+            row is None
+            or row.purpose != purpose.value
+            or not hmac.compare_digest(row.token_hash, token_hash)
+            or row.user_id is None
+            or row.consumed_at is not None
+            or row.revoked_at is not None
+            or row.expires_at <= now.value
+        ):
+            if row is not None:
+                self._audit_token_rejection(session, row, now, request_id)
+            return None
+        return row
+
+    def _audit_token_rejection(
+        self,
+        session: Session,
+        row: EmailTokenModel,
+        now: Instant,
+        request_id: UUID | None,
+    ) -> None:
+        owner_id = row.user_id
+        if owner_id is None and row.invitation_id is not None:
+            owner_id = session.scalar(
+                select(InvitationModel.invited_by).where(InvitationModel.id == row.invitation_id)
+            )
+        if owner_id is None:
+            return
+        self._audit(
+            session,
+            owner_id=owner_id,
+            actor_id=owner_id,
+            event_type="identity.email_token_replay_rejected",
+            aggregate_type="email_token",
+            aggregate_id=row.id,
+            occurred_at=now,
+            request_id=request_id,
+            payload={"purpose": row.purpose},
+        )
+
+    @staticmethod
+    def _discard_email_job(session: Session, token_id: UUID, now: Instant) -> None:
+        session.execute(
+            update(EmailDeliveryJobModel)
+            .where(
+                EmailDeliveryJobModel.token_id == token_id,
+                EmailDeliveryJobModel.state.in_(("pending", "leased")),
+            )
+            .values(
+                state="completed",
+                text_body=None,
+                lease_owner=None,
+                leased_until=None,
+                last_error="TokenAlreadyConsumed",
+                completed_at=now.value,
+            )
+        )
+
+    @staticmethod
+    def _profile_rows(
+        session: Session, user_id: UUID
+    ) -> tuple[UserModel, CredentialModel, UserProfileModel] | None:
+        row = session.execute(
+            select(UserModel, CredentialModel, UserProfileModel)
+            .join(CredentialModel, CredentialModel.user_id == UserModel.id)
+            .join(UserProfileModel, UserProfileModel.user_id == UserModel.id)
+            .where(UserModel.id == user_id)
+        ).one_or_none()
+        if row is None:
+            return None
+        return row
 
     @staticmethod
     def _audit(
@@ -476,6 +931,33 @@ def _profile_from_rows(
         status=UserStatus(user.status),
         is_master=user.is_master,
         created_at=Instant(user.created_at),
+        is_admin=user.is_admin,
+        email_verified_at=(
+            None if user.email_verified_at is None else Instant(user.email_verified_at)
+        ),
+    )
+
+
+def _allowlist_from_row(row: EmailAllowlistModel) -> AllowlistEntry:
+    return AllowlistEntry(
+        id=row.id,
+        email=EmailAddress(row.email),
+        added_by=row.added_by,
+        created_at=Instant(row.created_at),
+        revoked_at=None if row.revoked_at is None else Instant(row.revoked_at),
+    )
+
+
+def _invitation_from_row(row: InvitationModel) -> Invitation:
+    return Invitation(
+        id=row.id,
+        email=EmailAddress(row.email),
+        invited_by=row.invited_by,
+        created_at=Instant(row.created_at),
+        expires_at=Instant(row.expires_at),
+        is_admin=row.is_admin,
+        accepted_at=None if row.accepted_at is None else Instant(row.accepted_at),
+        revoked_at=None if row.revoked_at is None else Instant(row.revoked_at),
     )
 
 
@@ -534,4 +1016,19 @@ def _email_token_from_row(row: EmailTokenModel) -> EmailToken:
         expires_at=Instant(row.expires_at),
         consumed_at=None if row.consumed_at is None else Instant(row.consumed_at),
         revoked_at=None if row.revoked_at is None else Instant(row.revoked_at),
+    )
+
+
+def _email_job_to_row(job: EmailDeliveryJob) -> EmailDeliveryJobModel:
+    return EmailDeliveryJobModel(
+        id=job.id,
+        token_id=job.token_id,
+        purpose=job.purpose.value,
+        recipient=job.recipient,
+        subject=job.subject,
+        text_body=job.text_body,
+        state=job.state.value,
+        attempts=job.attempts,
+        available_at=job.available_at.value,
+        created_at=job.created_at.value,
     )

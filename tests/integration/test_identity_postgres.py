@@ -17,9 +17,12 @@ from financial_analytics_app.identity import (
 )
 from financial_analytics_domain import EmailTokenPurpose, Instant
 from financial_analytics_infra.identity import PostgresIdentityStore
+from financial_analytics_infra.mail import PostgresEmailJobRepository
 from financial_analytics_infra.models import (
+    AccountModel,
     AuditEventModel,
     CredentialModel,
+    EmailDeliveryJobModel,
     EmailTokenModel,
     SessionModel,
     UserModel,
@@ -122,6 +125,8 @@ def test_identity_security_matrix_and_secret_redaction(postgres_engine: Engine) 
     invitations = InvitationService(
         store,
         HmacSecretProvider("email-token-secret-for-integration"),
+        Argon2idPasswordHashes(),
+        public_base_url="https://finance.example.test",
         clock=clock,
     )
     invitations.allow_email("guest@example.com", actor_id=active.profile.id)
@@ -155,6 +160,80 @@ def test_identity_security_matrix_and_secret_redaction(postgres_engine: Engine) 
     with pytest.raises(EmailTokenInvalidError):
         invitations.consume_invitation(expiring_token)
 
+    allowlist_entry = invitations.allow_email("member@example.com", actor_id=active.profile.id)
+    _, registration_token = invitations.issue_invitation(
+        "member@example.com", actor_id=active.profile.id
+    )
+    mail_repository = PostgresEmailJobRepository(postgres_engine)
+    claimed = mail_repository.claim_jobs(
+        clock(), worker_id="identity-test", lease_duration=timedelta(seconds=30), limit=20
+    )
+    member_job = next(job for job in claimed if job.recipient == "member@example.com")
+    assert mail_repository.complete_job(
+        member_job.id, worker_id="identity-test", completed_at=clock()
+    )
+    member = invitations.accept_invitation(
+        registration_token,
+        password="member correct horse battery",
+        base_currency="RUB",
+        locale="ru-RU",
+        timezone="Europe/Saratov",
+    )
+    _, verification_token = invitations.issue_user_token(
+        member.id, EmailTokenPurpose.VERIFY_EMAIL, actor_id=member.id
+    )
+    assert invitations.verify_email(verification_token).email_verified_at == clock()
+    with pytest.raises(EmailTokenInvalidError):
+        invitations.verify_email(verification_token)
+    _, reset_token = invitations.issue_user_token(
+        member.id, EmailTokenPurpose.RESET_PASSWORD, actor_id=member.id
+    )
+    member_session = service.login(
+        "member@example.com", "member correct horse battery", rate_limit_key="member-login"
+    )
+    invitations.reset_password(reset_token, new_password="new member correct horse battery")
+    with pytest.raises(InvalidSessionError):
+        service.authenticate_access(member_session.access_token)
+    with pytest.raises(EmailTokenInvalidError):
+        invitations.reset_password(reset_token, new_password="new member correct horse battery")
+    assert (
+        service.login(
+            "member@example.com", "new member correct horse battery", rate_limit_key="member-reset"
+        ).profile.id
+        == member.id
+    )
+    with pytest.raises(EmailTokenInvalidError):
+        invitations.accept_invitation(
+            registration_token,
+            password="member correct horse battery",
+            base_currency="RUB",
+            locale="ru-RU",
+            timezone="Europe/Saratov",
+        )
+    with Session(postgres_engine) as db, db.begin():
+        account = AccountModel(
+            id=member.id.__class__(int=999),
+            owner_id=member.id,
+            name="Preserved account",
+            kind="bank",
+            currency="RUB",
+            created_at=clock().value,
+            updated_at=clock().value,
+        )
+        db.add(account)
+        account_id = account.id
+    revoked = invitations.revoke_allowlist(
+        allowlist_entry.id,
+        actor_id=active.profile.id,
+    )
+    assert revoked is not None and revoked.revoked_at is not None
+    with Session(postgres_engine) as db:
+        persisted_member = db.get(UserModel, member.id)
+        assert persisted_member is not None and persisted_member.status == "disabled"
+        assert db.get(AccountModel, account_id) is not None
+        delivered = db.get(EmailDeliveryJobModel, member_job.id)
+        assert delivered is not None and delivered.text_body is None
+
     with Session(postgres_engine) as db:
         audit_payloads = json.dumps(
             [row.payload for row in db.scalars(select(AuditEventModel))], sort_keys=True
@@ -162,3 +241,49 @@ def test_identity_security_matrix_and_secret_redaction(postgres_engine: Engine) 
         assert password not in audit_payloads
         assert original.refresh_token not in audit_payloads
         assert raw_email_token not in audit_payloads
+        event_types = set(db.scalars(select(AuditEventModel.event_type)))
+        assert "identity.email_token_replay_rejected" in event_types
+        assert "identity.allowlist_revoked" in event_types
+
+    invitations.allow_email("delivery-failure@example.com", actor_id=active.profile.id)
+    invitations.issue_invitation("delivery-failure@example.com", actor_id=active.profile.id)
+    for attempt in range(5):
+        jobs = mail_repository.claim_jobs(
+            clock(), worker_id="mail-failure", lease_duration=timedelta(seconds=30), limit=20
+        )
+        failed_job = next(job for job in jobs if job.recipient == "delivery-failure@example.com")
+        assert failed_job.attempts == attempt + 1
+        assert not mail_repository.complete_job(
+            failed_job.id, worker_id="wrong-owner", completed_at=clock()
+        )
+        assert mail_repository.fail_job(
+            failed_job.id,
+            worker_id="mail-failure",
+            failed_at=clock(),
+            error_code="TimeoutError",
+            base_backoff=timedelta(seconds=1),
+        )
+        clock.value = Instant(clock().value + timedelta(seconds=60))
+    with Session(postgres_engine) as db:
+        dead_job = db.get(EmailDeliveryJobModel, failed_job.id)
+        assert dead_job is not None and dead_job.state == "dead_letter"
+        assert dead_job.text_body is None
+
+    invitations.allow_email("lease-expired@example.com", actor_id=active.profile.id)
+    invitations.issue_invitation("lease-expired@example.com", actor_id=active.profile.id)
+    for _ in range(5):
+        mail_repository.claim_jobs(
+            clock(), worker_id="crashed-mail", lease_duration=timedelta(seconds=30), limit=20
+        )
+        clock.value = Instant(clock().value + timedelta(seconds=31))
+    assert not mail_repository.claim_jobs(
+        clock(), worker_id="recovered-mail", lease_duration=timedelta(seconds=30), limit=20
+    )
+    with Session(postgres_engine) as db:
+        expired_job = db.scalar(
+            select(EmailDeliveryJobModel).where(
+                EmailDeliveryJobModel.recipient == "lease-expired@example.com"
+            )
+        )
+        assert expired_job is not None and expired_job.state == "dead_letter"
+        assert expired_job.text_body is None and expired_job.lease_owner is None

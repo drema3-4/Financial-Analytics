@@ -95,6 +95,18 @@ export type AdviceResponse = {
   privacy: AdvicePrivacyResponse;
 };
 
+export type AllowlistRequest = {
+  email: string;
+};
+
+export type AllowlistResponse = {
+  id: string;
+  email: string;
+  added_by: string;
+  created_at: string;
+  revoked_at: (string) | (null);
+};
+
 export type AnomalyFlagResponse = {
   bucket_start: string;
   bucket_end: string;
@@ -340,6 +352,10 @@ export type EarlyCloseRuleResponse = {
   nominal_rate: (string) | (null);
 };
 
+export type EmailTokenRequest = {
+  token: string;
+};
+
 export type EvidenceResponse = {
   transaction_ids: Array<string>;
   posting_ids: Array<string>;
@@ -493,6 +509,30 @@ export type InterestScheduleEntryResponse = {
   closing_balance: MoneyResponse;
 };
 
+export type InvitationAcceptanceRequest = {
+  token: string;
+  password: string;
+  base_currency: string;
+  locale?: string;
+  timezone: string;
+};
+
+export type InvitationRequest = {
+  email: string;
+  is_admin?: boolean;
+};
+
+export type InvitationResponse = {
+  id: string;
+  email: string;
+  invited_by: string;
+  created_at: string;
+  expires_at: string;
+  is_admin: boolean;
+  accepted_at: (string) | (null);
+  revoked_at: (string) | (null);
+};
+
 export type LivenessResponse = {
   status?: "alive";
 };
@@ -542,6 +582,15 @@ export type OperationRequest = {
   description?: string;
   source?: "manual" | "import";
   tag_ids?: Array<string>;
+};
+
+export type PasswordResetConfirmationRequest = {
+  token: string;
+  new_password: string;
+};
+
+export type PasswordResetRequest = {
+  email: string;
 };
 
 export type PeriodComparisonResponse = {
@@ -610,6 +659,8 @@ export type ProfileResponse = {
   timezone: string;
   status: string;
   is_master: boolean;
+  is_admin: boolean;
+  email_verified: boolean;
   created_at: string;
 };
 
@@ -897,6 +948,89 @@ export class FinancialAnalyticsClient {
       headers["X-CSRF-Token"] = String(args.xCSRFToken);
     }
     return this.request<void>("POST", path, query, undefined, headers);
+  }
+
+  async accept_invitation_api_v1_auth_invitations_accept_post(args: { body: InvitationAcceptanceRequest; }): Promise<ProfileResponse> {
+    let path = "/api/v1/auth/invitations/accept";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    return this.request<ProfileResponse>("POST", path, query, args.body, headers);
+  }
+
+  async request_email_verification_api_v1_auth_email_verification_request_post(args: { xCSRFToken?: (string) | (null); } = {}): Promise<unknown> {
+    let path = "/api/v1/auth/email-verification/request";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<unknown>("POST", path, query, undefined, headers);
+  }
+
+  async confirm_email_verification_api_v1_auth_email_verification_confirm_post(args: { body: EmailTokenRequest; }): Promise<ProfileResponse> {
+    let path = "/api/v1/auth/email-verification/confirm";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    return this.request<ProfileResponse>("POST", path, query, args.body, headers);
+  }
+
+  async request_password_reset_api_v1_auth_password_reset_request_post(args: { body: PasswordResetRequest; }): Promise<unknown> {
+    let path = "/api/v1/auth/password-reset/request";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    return this.request<unknown>("POST", path, query, args.body, headers);
+  }
+
+  async confirm_password_reset_api_v1_auth_password_reset_confirm_post(args: { body: PasswordResetConfirmationRequest; }): Promise<void> {
+    let path = "/api/v1/auth/password-reset/confirm";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    return this.request<void>("POST", path, query, args.body, headers);
+  }
+
+  async list_allowlist_api_v1_admin_allowlist_get(): Promise<Array<AllowlistResponse>> {
+    let path = "/api/v1/admin/allowlist";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    return this.request<Array<AllowlistResponse>>("GET", path, query, undefined, headers);
+  }
+
+  async add_allowlist_api_v1_admin_allowlist_post(args: { xCSRFToken?: (string) | (null); body: AllowlistRequest; }): Promise<AllowlistResponse> {
+    let path = "/api/v1/admin/allowlist";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<AllowlistResponse>("POST", path, query, args.body, headers);
+  }
+
+  async revoke_allowlist_api_v1_admin_allowlist__entry_id__delete(args: { entryId: string; xCSRFToken?: (string) | (null); }): Promise<AllowlistResponse> {
+    let path = "/api/v1/admin/allowlist/{entry_id}";
+    path = path.replace("{entry_id}", encodeURIComponent(String(args.entryId)));
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<AllowlistResponse>("DELETE", path, query, undefined, headers);
+  }
+
+  async list_invitations_api_v1_admin_invitations_get(): Promise<Array<InvitationResponse>> {
+    let path = "/api/v1/admin/invitations";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    return this.request<Array<InvitationResponse>>("GET", path, query, undefined, headers);
+  }
+
+  async create_invitation_api_v1_admin_invitations_post(args: { xCSRFToken?: (string) | (null); body: InvitationRequest; }): Promise<InvitationResponse> {
+    let path = "/api/v1/admin/invitations";
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<InvitationResponse>("POST", path, query, args.body, headers);
   }
 
   async current_profile_api_v1_profile_get(): Promise<ProfileResponse> {

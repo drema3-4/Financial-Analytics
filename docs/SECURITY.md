@@ -22,8 +22,8 @@ The executable stage-12 threat matrix, scanner failure policy and exception form
 - Passwords use Argon2id (`m=65536`, `t=3`, `p=4`, 32-byte output, 16-byte random salt).
   Parameters travel with the encoded hash and login performs opportunistic rehash.
 - Access, refresh, CSRF and email secrets are generated from the OS CSPRNG. PostgreSQL stores
-  only keyed SHA-256 digests. Raw values exist only at issue time and in browser cookies or an
-  eventual email delivery job.
+  only keyed SHA-256 token digests. Raw email URLs additionally exist in the restricted SMTP
+  outbox until successful delivery, when the message body is cleared.
 - Access lifetime is 15 minutes; refresh has a non-sliding 30-day lifetime. Refresh rotates all
   three session secrets atomically. Replay is rejected; a replay carrying the current
   session-bound CSRF proof also revokes that session.
@@ -32,8 +32,15 @@ The executable stage-12 threat matrix, scanner failure policy and exception form
   session-bound digest. Login/bootstrap do not rely on an ambient authenticated cookie.
 - CORS credentials are returned only to configured exact origins; `*` is rejected. Login and
   refresh are limited by IP plus identity/session key through a replaceable application port.
-- The master bootstrap is serialized by a PostgreSQL advisory transaction lock and protected
-  by a unique partial index. There is no reset endpoint.
+- The master bootstrap is serialized by a PostgreSQL advisory transaction lock, protected by a
+  unique partial index, and in production restricted to `BOOTSTRAP_MASTER_EMAIL`. There is no
+  bootstrap reset endpoint.
+- Master/admin access gates allowlist and invitation APIs; only master can grant admin. Removing
+  an allowlist entry disables the matching non-master user and revokes sessions/tokens without
+  deleting tenant or audit rows.
+- Invitation, verification and password-reset links are one-time and expire after 2 hours,
+  30 minutes and 15 minutes respectively. Password-reset requests always return the same `202`.
+  Replay of a known token id is appended to the audit trail.
 - Every user-owned repository requires an owner at construction and applies it to ID lookup and
   filters. Composite owner foreign keys prevent cross-tenant links. Authorization tests use two
   owners and guessed IDs.
@@ -48,6 +55,11 @@ The executable stage-12 threat matrix, scanner failure policy and exception form
 random value of at least 32 bytes, delivered via environment/secret manager and never committed.
 `POSTGRES_PASSWORD` is independent. Development defaults are public, local-only values and are
 rejected when `APP_ENV=production`.
+
+Production also rejects HTTP public URLs/origins, wildcard CORS, insecure cookies, debug mode,
+plaintext SMTP, missing trusted proxy IPs, missing bootstrap email, repeated/predictable secrets
+and placeholder database credentials. Forwarded headers are disabled unless explicit proxy
+addresses are configured. See [DEPLOYMENT.md](DEPLOYMENT.md).
 
 `LLM_API_KEY` is optional for a local endpoint and required for an external production endpoint.
 It is represented as `SecretStr`, sent only in the Authorization header and never copied into
@@ -89,6 +101,12 @@ emergency global logout mechanism.
 3. Revoke unconsumed rows, audit the count, and reissue still-needed invitations or recovery
    links. Old links must fail; do not retain the old key for a grace period.
 4. Resume jobs and test issue/consume/replay with a non-production address.
+
+### SMTP credential
+
+Create the replacement credential at the relay, update API/worker secret delivery, restart the
+worker, send a non-production invitation, and verify delivery before revoking the old credential.
+Do not copy the password, recipient, message body or one-time URL into logs or tickets.
 
 ### Database password
 

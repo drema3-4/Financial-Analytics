@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from urllib.parse import urlsplit
+from ipaddress import ip_network
+from urllib.parse import unquote, urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from financial_analytics_domain import EmailAddress
 
 DEFAULT_DEVELOPMENT_DATABASE_URL = (
     "postgresql+psycopg://financial_analytics:financial_analytics_dev"
@@ -32,6 +35,12 @@ class LlmEndpointScope(StrEnum):
     EXTERNAL = "external"
 
 
+class SmtpSecurity(StrEnum):
+    PLAIN = "plain"
+    STARTTLS = "starttls"
+    TLS = "tls"
+
+
 class Settings(BaseSettings):
     """Validated runtime configuration loaded from environment variables.
 
@@ -45,11 +54,13 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
         populate_by_name=True,
+        hide_input_in_errors=True,
     )
 
     app_env: AppEnvironment = AppEnvironment.DEVELOPMENT
     app_name: str = "Financial Analytics API"
-    app_version: str = "0.1.0"
+    app_version: str = "0.2.0"
+    debug: bool = False
     log_level: str = "INFO"
     database_url_secret: SecretStr = Field(
         default=SecretStr(DEFAULT_DEVELOPMENT_DATABASE_URL),
@@ -73,9 +84,20 @@ class Settings(BaseSettings):
         repr=False,
     )
     session_cookie_secure: bool = True
+    session_cookie_domain: str | None = None
     access_cookie_name: str = "fa_access"
     refresh_cookie_name: str = "fa_refresh"
     csrf_cookie_name: str = "fa_csrf"
+    public_base_url: str = "http://localhost:4173"
+    bootstrap_master_email: str | None = None
+    trusted_proxy_ips: list[str] = Field(default_factory=list)
+    smtp_host: str = "mailpit"
+    smtp_port: int = Field(default=1025, ge=1, le=65535)
+    smtp_from_address: str = "no-reply@localhost"
+    smtp_security: SmtpSecurity = SmtpSecurity.PLAIN
+    smtp_username: str | None = None
+    smtp_password_value: SecretStr | None = Field(default=None, alias="SMTP_PASSWORD", repr=False)
+    smtp_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     llm_provider: LlmProvider = LlmProvider.DISABLED
     llm_base_url: str | None = None
     llm_api_key_value: SecretStr | None = Field(default=None, alias="LLM_API_KEY", repr=False)
@@ -128,6 +150,68 @@ class Settings(BaseSettings):
             raise ValueError("identity secrets must contain at least 32 UTF-8 bytes")
         return value
 
+    @field_validator("public_base_url")
+    @classmethod
+    def validate_public_base_url(cls, value: str) -> str:
+        normalized = value.rstrip("/")
+        parsed = urlsplit(normalized)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError("PUBLIC_BASE_URL must be an exact HTTP(S) origin")
+        return normalized
+
+    @field_validator("bootstrap_master_email", "smtp_from_address")
+    @classmethod
+    def validate_configured_email(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        return EmailAddress(value).value
+
+    @field_validator("smtp_username", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("smtp_password_value", "llm_api_key_value", mode="before")
+    @classmethod
+    def normalize_optional_secret(cls, value: object) -> object:
+        if isinstance(value, str) and not value:
+            return None
+        return value
+
+    @field_validator("session_cookie_domain")
+    @classmethod
+    def validate_cookie_domain(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip().lstrip(".").lower()
+        if any(character in normalized for character in ("/", ":", "*", "@")):
+            raise ValueError("SESSION_COOKIE_DOMAIN must be a bare DNS suffix")
+        return normalized
+
+    @field_validator("trusted_proxy_ips")
+    @classmethod
+    def validate_trusted_proxy_ips(cls, values: list[str]) -> list[str]:
+        for value in values:
+            try:
+                network = ip_network(value.strip(), strict=False)
+            except ValueError as error:
+                raise ValueError(
+                    "TRUSTED_PROXY_IPS must contain explicit IP addresses or CIDRs"
+                ) from error
+            if network.prefixlen == 0:
+                raise ValueError("TRUSTED_PROXY_IPS cannot trust every address")
+        return [value.strip() for value in values]
+
     @field_validator("llm_base_url")
     @classmethod
     def validate_llm_base_url(cls, value: str | None) -> str | None:
@@ -158,11 +242,39 @@ class Settings(BaseSettings):
                 raise ValueError("openai_compatible LLM provider requires LLM_BASE_URL")
             if not self.llm_model.strip():
                 raise ValueError("openai_compatible LLM provider requires LLM_MODEL")
+        if (self.smtp_username is None) != (self.smtp_password_value is None):
+            raise ValueError("SMTP_USERNAME and SMTP_PASSWORD must be configured together")
         if self.app_env is AppEnvironment.PRODUCTION:
-            if self.database_url == DEFAULT_DEVELOPMENT_DATABASE_URL:
+            if (
+                self.database_url == DEFAULT_DEVELOPMENT_DATABASE_URL
+                or "financial_analytics_dev" in self.database_url
+                or "replace-with" in self.database_url
+            ):
                 raise ValueError("production requires an explicit DATABASE_URL")
+            database_password = unquote(urlsplit(self.database_url).password or "")
+            if (
+                len(database_password) < 16
+                or len(set(database_password)) < 8
+                or database_password.lower()
+                in {"postgres", "password", "secret", "admin", "changeme"}
+            ):
+                raise ValueError("production requires non-default database credentials")
+            if self.debug or self.log_level == "DEBUG":
+                raise ValueError("production forbids debug mode and DEBUG logging")
             if not self.session_cookie_secure:
                 raise ValueError("production requires Secure session cookies")
+            if urlsplit(self.public_base_url).scheme != "https":
+                raise ValueError("production PUBLIC_BASE_URL must use HTTPS")
+            if any(urlsplit(origin).scheme != "https" for origin in self.cors_origins):
+                raise ValueError("production CORS origins must use HTTPS")
+            if not self.trusted_proxy_ips:
+                raise ValueError("production requires explicit TRUSTED_PROXY_IPS")
+            if self.bootstrap_master_email is None:
+                raise ValueError("production requires BOOTSTRAP_MASTER_EMAIL")
+            if not self.smtp_host.strip() or self.smtp_from_address is None:
+                raise ValueError("production requires SMTP host and from address")
+            if self.smtp_security is SmtpSecurity.PLAIN:
+                raise ValueError("production SMTP requires STARTTLS or TLS")
             development_secrets = {
                 DEFAULT_DEVELOPMENT_SESSION_SECRET,
                 DEFAULT_DEVELOPMENT_CSRF_SECRET,
@@ -175,8 +287,24 @@ class Settings(BaseSettings):
             }
             if development_secrets & configured_secrets:
                 raise ValueError("production requires explicit identity secrets")
-            if any(secret.startswith("replace-with-") for secret in configured_secrets):
+            if any(
+                any(
+                    marker in secret.lower()
+                    for marker in (
+                        "replace-with-",
+                        "default",
+                        "change-me",
+                        "changeme",
+                        "development",
+                    )
+                )
+                for secret in configured_secrets
+            ):
                 raise ValueError("production identity secrets still contain placeholders")
+            if len(configured_secrets) != 3:
+                raise ValueError("production identity secrets must be independent")
+            if any(len(set(secret)) < 12 for secret in configured_secrets):
+                raise ValueError("production identity secrets are too predictable")
             if (
                 self.llm_provider is LlmProvider.OPENAI_COMPATIBLE
                 and self.llm_endpoint_scope is LlmEndpointScope.EXTERNAL
@@ -209,3 +337,9 @@ class Settings(BaseSettings):
         if self.llm_api_key_value is None:
             return None
         return self.llm_api_key_value.get_secret_value()
+
+    @property
+    def smtp_password(self) -> str | None:
+        if self.smtp_password_value is None:
+            return None
+        return self.smtp_password_value.get_secret_value()

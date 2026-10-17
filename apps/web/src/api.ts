@@ -3,6 +3,8 @@ import {
   FinancialAnalyticsClient,
   type AccountResponse,
   type AdjustmentRequest,
+  type AllowlistRequest,
+  type AllowlistResponse,
   type AdviceProviderStatusResponse,
   type AdviceRequest,
   type AdviceResponse,
@@ -22,6 +24,10 @@ import {
   type ForecastRunResponse,
   type GoalInput,
   type GoalResponse,
+  type EmailTokenRequest,
+  type InvitationAcceptanceRequest,
+  type InvitationRequest,
+  type InvitationResponse,
   type LoginRequest,
   type OperationRequest,
   type PeriodGranularity,
@@ -29,6 +35,8 @@ import {
   type PreviewOccurrencesRequest,
   type ProblemDetails,
   type ProfileResponse,
+  type PasswordResetConfirmationRequest,
+  type PasswordResetRequest,
   type RecurringRuleResponse,
   type ReversalRequest,
   type ScenarioInput,
@@ -49,7 +57,16 @@ export type SessionSnapshot =
 export interface FinanceApi {
   bootstrapSession(): Promise<SessionSnapshot>;
   bootstrapMaster(payload: BootstrapRequest): Promise<ProfileResponse>;
+  acceptInvitation(payload: InvitationAcceptanceRequest): Promise<ProfileResponse>;
+  requestPasswordReset(payload: PasswordResetRequest): Promise<void>;
+  confirmPasswordReset(payload: PasswordResetConfirmationRequest): Promise<void>;
+  confirmEmailVerification(payload: EmailTokenRequest): Promise<ProfileResponse>;
   login(payload: LoginRequest): Promise<ProfileResponse>;
+  listAllowlist(): Promise<AllowlistResponse[]>;
+  addAllowlist(payload: AllowlistRequest): Promise<AllowlistResponse>;
+  revokeAllowlist(entryId: string): Promise<AllowlistResponse>;
+  listInvitations(): Promise<InvitationResponse[]>;
+  createInvitation(payload: InvitationRequest): Promise<InvitationResponse>;
   listAccounts(): Promise<AccountResponse[]>;
   createAccount(payload: CreateAccountRequest): Promise<AccountResponse>;
   getDashboard(periodStart?: string, periodEnd?: string): Promise<DashboardResponse>;
@@ -153,10 +170,73 @@ export class BrowserFinanceApi implements FinanceApi {
     return profile;
   }
 
+  async acceptInvitation(payload: InvitationAcceptanceRequest): Promise<ProfileResponse> {
+    const profile = await this.client.accept_invitation_api_v1_auth_invitations_accept_post({
+      body: payload,
+    });
+    this.sessionBootstrap = undefined;
+    return profile;
+  }
+
+  async requestPasswordReset(payload: PasswordResetRequest): Promise<void> {
+    await this.client.request_password_reset_api_v1_auth_password_reset_request_post({
+      body: payload,
+    });
+  }
+
+  confirmPasswordReset(payload: PasswordResetConfirmationRequest): Promise<void> {
+    return this.client.confirm_password_reset_api_v1_auth_password_reset_confirm_post({
+      body: payload,
+    });
+  }
+
+  confirmEmailVerification(payload: EmailTokenRequest): Promise<ProfileResponse> {
+    return this.client.confirm_email_verification_api_v1_auth_email_verification_confirm_post({
+      body: payload,
+    });
+  }
+
   async login(payload: LoginRequest): Promise<ProfileResponse> {
     const profile = await this.client.login_api_v1_auth_login_post({ body: payload });
     this.sessionBootstrap = undefined;
     return profile;
+  }
+
+  listAllowlist(): Promise<AllowlistResponse[]> {
+    return this.withSessionRecovery(() => this.client.list_allowlist_api_v1_admin_allowlist_get());
+  }
+
+  addAllowlist(payload: AllowlistRequest): Promise<AllowlistResponse> {
+    return this.withSessionRecovery(() =>
+      this.client.add_allowlist_api_v1_admin_allowlist_post({
+        xCSRFToken: this.csrfToken(),
+        body: payload,
+      }),
+    );
+  }
+
+  revokeAllowlist(entryId: string): Promise<AllowlistResponse> {
+    return this.withSessionRecovery(() =>
+      this.client.revoke_allowlist_api_v1_admin_allowlist__entry_id__delete({
+        entryId,
+        xCSRFToken: this.csrfToken(),
+      }),
+    );
+  }
+
+  listInvitations(): Promise<InvitationResponse[]> {
+    return this.withSessionRecovery(() =>
+      this.client.list_invitations_api_v1_admin_invitations_get(),
+    );
+  }
+
+  createInvitation(payload: InvitationRequest): Promise<InvitationResponse> {
+    return this.withSessionRecovery(() =>
+      this.client.create_invitation_api_v1_admin_invitations_post({
+        xCSRFToken: this.csrfToken(),
+        body: payload,
+      }),
+    );
   }
 
   async listAccounts(): Promise<AccountResponse[]> {

@@ -28,6 +28,14 @@ from financial_analytics_app.ledger import (
     ResourceNotFoundError,
     TransactionPage,
 )
+from financial_analytics_app.mail import (
+    CompositeJobProcessor,
+    EmailDeliveryJob,
+    EmailJobProcessor,
+    EmailJobState,
+    EmailJobTickResult,
+    EmailSender,
+)
 from financial_analytics_app.ports import (
     AdviceMessage,
     AdvicePrompt,
@@ -81,6 +89,12 @@ __all__ = [
     "DepositService",
     "DepositValuation",
     "DisabledAdviceProvider",
+    "CompositeJobProcessor",
+    "EmailDeliveryJob",
+    "EmailJobProcessor",
+    "EmailJobState",
+    "EmailJobTickResult",
+    "EmailSender",
     "ForecastComparison",
     "ForecastComparisonItem",
     "ForecastRepository",

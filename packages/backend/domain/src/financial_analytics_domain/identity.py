@@ -43,6 +43,8 @@ class UserProfile:
     status: UserStatus
     is_master: bool
     created_at: Instant
+    is_admin: bool = False
+    email_verified_at: Instant | None = None
 
     def __post_init__(self) -> None:
         if _LOCALE_RE.fullmatch(self.locale) is None:
@@ -55,6 +57,10 @@ class UserProfile:
     @property
     def enabled(self) -> bool:
         return self.status is UserStatus.ACTIVE
+
+    @property
+    def can_manage_access(self) -> bool:
+        return self.is_master or self.is_admin
 
 
 class EmailTokenPurpose(StrEnum):
@@ -70,6 +76,7 @@ class Invitation:
     invited_by: UUID
     created_at: Instant
     expires_at: Instant
+    is_admin: bool = False
     accepted_at: Instant | None = None
     revoked_at: Instant | None = None
 

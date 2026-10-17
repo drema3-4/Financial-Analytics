@@ -12,10 +12,16 @@ from pathlib import Path
 from types import FrameType
 from uuid import uuid4
 
-from financial_analytics_app import LedgerService, RecurringJobProcessor
+from financial_analytics_app import (
+    CompositeJobProcessor,
+    EmailJobProcessor,
+    LedgerService,
+    RecurringJobProcessor,
+)
 from financial_analytics_domain import Instant
 from financial_analytics_infra.database import Database
 from financial_analytics_infra.logging import redact_sensitive_text
+from financial_analytics_infra.mail import PostgresEmailJobRepository, SmtpEmailSender
 from financial_analytics_infra.repositories import PostgresUnitOfWorkFactory
 from financial_analytics_infra.scheduling import PostgresSchedulingRepository
 from financial_analytics_infra.settings import Settings
@@ -72,11 +78,27 @@ def run() -> int:
         def clock() -> Instant:
             return Instant.now() if fixed_clock is None else Instant(fixed_clock)
 
-        processor = RecurringJobProcessor(
+        recurring_processor = RecurringJobProcessor(
             scheduling,
             LedgerService(PostgresUnitOfWorkFactory(database.engine), clock=clock),
             clock=clock,
         )
+        if settings.smtp_from_address is None:
+            raise ValueError("SMTP_FROM_ADDRESS is required")
+        email_processor = EmailJobProcessor(
+            PostgresEmailJobRepository(database.engine),
+            SmtpEmailSender(
+                host=settings.smtp_host,
+                port=settings.smtp_port,
+                from_address=settings.smtp_from_address,
+                security=settings.smtp_security.value,
+                username=settings.smtp_username,
+                password=settings.smtp_password,
+                timeout_seconds=settings.smtp_timeout_seconds,
+            ),
+            clock=clock,
+        )
+        processor = CompositeJobProcessor(recurring_processor, email_processor)
         worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:8]}"
         worker = Worker(database, heartbeat, processor, worker_id=worker_id)
         stop_requested = threading.Event()
