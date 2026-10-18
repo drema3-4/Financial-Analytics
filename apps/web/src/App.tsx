@@ -28,7 +28,7 @@ import {
   InputField,
   isZeroDecimal,
   LoadingState,
-  localDateAtNoonUtc,
+  operationInstant,
   MoneyInput,
   parseLocalizedDecimal,
   SelectField,
@@ -46,14 +46,12 @@ type AppState =
   | { status: "authenticated"; profile: ProfileResponse; accounts: AccountResponse[] };
 
 const currencies = ["RUB", "USD", "EUR", "KZT", "CNY"] as const;
-const accountKinds = ["bank", "cash", "savings", "deposit", "other_asset"] as const;
+const accountKinds = ["bank", "cash", "other_asset"] as const;
 type AccountKind = (typeof accountKinds)[number];
 
 const accountKindLabels: Record<AccountKind, string> = {
   bank: "Банковский счёт",
   cash: "Наличные",
-  savings: "Накопительный",
-  deposit: "Вклад",
   other_asset: "Другой актив",
 };
 
@@ -209,7 +207,7 @@ function Application({ api }: { api: FinanceApi }) {
     );
   }
 
-  if (state.accounts.length === 0) {
+  if (path === "/onboarding/account") {
     return (
       <AccountSetupPage
         api={api}
@@ -855,7 +853,7 @@ function AccountSetupPage({
       payload = {
         ...payload,
         opening_balance: { amount: normalizedBalance, currency: profile.base_currency },
-        opening_balance_occurred_at: localDateAtNoonUtc(balanceDate, profile.timezone),
+        opening_balance_occurred_at: operationInstant(balanceDate, profile.timezone),
       };
     }
 
@@ -1295,6 +1293,28 @@ function AppShell({
         title="Профиль"
         variant="drawer"
       >
+        <nav aria-label="Все разделы" className="clean-list">
+          {[
+            ["/app/accounts", "Счета"],
+            ["/app/deposits", "Вклады"],
+            ["/app/recurring", "Регулярные операции"],
+            ["/app/forecast", "Прогноз"],
+            ["/app/goals", "Цели"],
+            ["/app/advice", "Советник"],
+            ...(profile.is_master || profile.is_admin ? [["/app/access", "Доступ"]] : []),
+          ].map(([to, label]) => (
+            <RouteLink
+              key={to}
+              to={to ?? "/app/dashboard"}
+              navigate={(next) => {
+                setProfileOpen(false);
+                navigate(next);
+              }}
+            >
+              {label}
+            </RouteLink>
+          ))}
+        </nav>
         <dl className="profile-details">
           <div>
             <dt>Email</dt>

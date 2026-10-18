@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -131,7 +131,7 @@ describe("financial workspace", () => {
     renderRoute("/app/transactions", financeApi);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Новая операция" }));
-    await user.selectOptions(await screen.findByLabelText("Категория"), "cat");
+    await user.type(await screen.findByLabelText("Категория"), "Продукты");
     await user.type(screen.getByLabelText("Сумма"), "1 250,40");
     await user.type(screen.getByLabelText("Комментарий"), "Продукты");
     await user.click(screen.getByRole("button", { name: "Провести" }));
@@ -149,6 +149,93 @@ describe("financial workspace", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Не удалось связаться");
     expect(screen.getByRole("button", { name: "Попробовать снова" })).toBeEnabled();
   });
+
+  it("creates a new category inside the operation form when the catalogue is empty", async () => {
+    const category = {
+      id: "new-category",
+      name: "Кофе",
+      kind: "expense" as const,
+      group_id: null,
+      is_mandatory: false,
+      version: 1,
+    };
+    const createCategory = vi.fn(() => Promise.resolve(category));
+    const createOperation = vi.fn(() => Promise.resolve({ id: "transaction" } as never));
+    renderRoute("/app/transactions", api({ createCategory, createOperation }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Новая операция" }));
+    await user.type(screen.getByLabelText("Категория"), "Кофе");
+    await user.type(screen.getByLabelText("Сумма"), "125,25");
+    await user.click(screen.getByRole("button", { name: "Провести" }));
+    expect(createCategory).toHaveBeenCalledWith({ name: "Кофе", kind: "expense" });
+    expect(createOperation).toHaveBeenCalledWith(
+      "expense",
+      expect.objectContaining({
+        category_id: "new-category",
+        money: { amount: "125.25", currency: "RUB" },
+      }),
+    );
+  });
+
+  it("edits the profile-local date and opens a clean new operation afterwards", async () => {
+    renderRoute(
+      "/app/transactions",
+      api({
+        listTransactions: () =>
+          Promise.resolve({
+            next_cursor: null,
+            items: [
+              {
+                id: "old-operation",
+                kind: "adjustment",
+                version: 1,
+                occurred_at: "2026-10-18T21:30:00Z",
+                description: "Прежние данные",
+                source: "manual",
+                category_id: null,
+                deposit_id: null,
+                reversal_of_id: null,
+                reversed_by_id: null,
+                tag_ids: [],
+                postings: [
+                  {
+                    id: "posting",
+                    account_id: account.id,
+                    reversal_of_id: null,
+                    money: { amount: "123.45", currency: "RUB" },
+                  },
+                ],
+              },
+            ],
+          }),
+      }),
+    );
+    const user = userEvent.setup();
+    const journal = await screen.findByRole("table", { name: "Журнал операций" });
+    await user.click(within(journal).getByRole("button", { name: "Изменить" }));
+    expect(screen.getByLabelText("Дата")).toHaveValue("2026-10-19");
+    await user.click(screen.getByRole("button", { name: "Закрыть" }));
+    await user.click(screen.getByRole("button", { name: "Новая операция" }));
+    expect(screen.getByLabelText("Сумма")).toHaveValue("");
+    expect(screen.getByLabelText("Комментарий")).toHaveValue("");
+    expect(screen.getByLabelText("Тип операции")).toHaveValue("expense");
+  });
+
+  it("requests an aligned current month and changes grouping without a broken end date", async () => {
+    const getFinancialReport = vi.fn(() => Promise.resolve(report));
+    renderRoute("/app/analytics", api({ getFinancialReport }));
+    await screen.findByRole("heading", { name: "Сравнение периодов" });
+    const firstCall = getFinancialReport.mock.calls[0] as unknown as [string, string, string];
+    expect(firstCall[0]).toMatch(/-01$/);
+    expect(firstCall[1]).toMatch(/-01$/);
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText("Группировка"), "week");
+    await user.click(screen.getByRole("button", { name: "Показать" }));
+    const lastCall = getFinancialReport.mock.calls.at(-1) as unknown as [string, string, string];
+    expect(new Date(`${lastCall[0]}T00:00:00Z`).getUTCDay()).toBe(1);
+    expect(new Date(`${lastCall[1]}T00:00:00Z`).getUTCDay()).toBe(1);
+    expect(lastCall[2]).toBe("week");
+  });
 });
 
 const report = {
@@ -156,7 +243,7 @@ const report = {
     start: "2026-10-01",
     end: "2026-10-16",
     timezone: "Europe/Saratov",
-    granularity: "month",
+    granularity: "month" as const,
     start_at: "2026-09-30T20:00:00Z",
     end_at: "2026-10-16T20:00:00Z",
   },

@@ -192,10 +192,12 @@ Finance включает `accounts`, `category_groups`, `categories`, `tags`, `t
 разрешает его только для expense category. Analytics не хранит totals: owner-scoped read model
 вычисляется из posted transactions/postings и возвращает исходные UUID как evidence.
 
-Deposits включает immutable `deposit_terms` и `deposit_rate_periods`. Производный план не
-дублируется в таблице: он воспроизводимо строится из versioned terms и deposit-linked transfer
-transactions. Фактические проценты — ledger transaction kind `interest`; `deposit_id` также
-переносится в reversal.
+Deposits включает versioned `deposit_terms` (name, archived, automatic_interest, updated_at)
+и `deposit_rate_periods`. Изменение сохраняет полный before/after snapshot в append-only audit.
+Производный план не дублируется в таблице: он строится из условий и всех principal postings,
+кроме процентов и отменённых операций. Внутренний account создаётся вместе с вкладом и скрыт
+из списка обычных счетов. Проценты — immutable ledger transaction kind `interest`;
+`deposit_id` также переносится в reversal. Worker проводит только разность due и posted.
 
 Planning включает `forecast_scenarios` и `financial_goals`. Оба набора строк owner-scoped,
 имеют optimistic `version`, а create/update сопровождаются append-only `audit_events`.
@@ -267,13 +269,17 @@ currency FK. `ForecastInputSnapshot`, timeline и results в БД не сохр�
 
 1. Deposit и principal account имеют одного owner/currency; principal account имеет kind
    `deposit`. Все repository reads owner-scoped.
-2. Terms/rate periods append-only. Rate periods — непересекающиеся полуоткрытые интервалы,
+2. Terms имеют optimistic version и before/after audit; удаления строк нет.
+   Rate periods — непересекающиеся полуоткрытые интервалы,
    без пробелов покрывающие `[opened_on, matures_on)`.
-3. Cashflow — transfer с `deposit_id`; план читает только transfer/reversal principal postings.
-   Interest posting не становится входным cashflow и поэтому не переписывает план.
+3. Cashflow берётся из любого principal posting обычной операции, включая начальный adjustment
+   и переводы без `deposit_id`. Отменённые пары исключаются из исправленного плана.
+   Interest posting не становится входным cashflow и поэтому не удваивает капитализацию.
 4. Фактический interest и его reversal остаются immutable ledger rows и audit events.
 5. Полные формулы, cut-off, day-count, rounding, tax, early-close и XIRR описаны в
    [DEPOSIT_CALCULATIONS.md](DEPOSIT_CALCULATIONS.md).
+6. Миграция legacy-контрактов не меняет ledger: automatic_interest=false до проверки владельцем.
+   Включение автоматического режима запрещено для нескольких активных договоров одного account.
 
 ## Forecast and goal invariants
 

@@ -1,6 +1,6 @@
 # Financial Analytics
 
-Local-first приложение для учёта личных финансов. Этапы 05–13 дают idempotent ledger API для
+Local-first приложение для учёта личных финансов. Этапы 05–14 дают idempotent ledger API для
 accounts, categories, income/expense/transfer/adjustment/reversal, stable cursor pagination,
 UTF-8 CSV export, recurring rules, deposits, reconciled analytics, детерминированные forecasts,
 versioned scenarios, numeric goal plans и необязательный provider-neutral LLM-советник.
@@ -10,6 +10,11 @@ Generated TypeScript client построен поверх double-entry domain co
 
 Источники требований: [SPEC.md](SPEC.md), [PLAN.md](PLAN.md) и
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+Основной сценарий: счета без процентов → отдельные вклады с автоматической капитализацией →
+единый журнал доходов, расходов и переводов между ними. Категорию можно написать прямо в форме.
+Счета, вклады, цели и операции имеют изменение/удаление с сохранением финансовой истории.
+Описание приёмки и миграции старых вкладов: [docs/CORE_FINANCE_ACCEPTANCE.md](docs/CORE_FINANCE_ACCEPTANCE.md).
 
 ## Быстрый запуск core stack
 

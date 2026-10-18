@@ -722,6 +722,36 @@
         "title": "AnomalyPolicyResponse",
         "type": "object"
       },
+      "ArchiveDepositRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "ArchiveDepositRequest",
+        "type": "object"
+      },
+      "ArchiveGoalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "ArchiveGoalRequest",
+        "type": "object"
+      },
       "BaselineExpenseResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1052,6 +1082,88 @@
         "title": "ComparisonMetricResponse",
         "type": "object"
       },
+      "CorrectionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "format": "uuid",
+            "title": "Account Id",
+            "type": "string"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "destination_account_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Account Id"
+          },
+          "kind": {
+            "enum": [
+              "income",
+              "expense",
+              "transfer",
+              "adjustment"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "money": {
+            "$ref": "#/components/schemas/MoneyInput"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "tag_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Tag Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "account_id",
+          "money",
+          "occurred_at",
+          "reason"
+        ],
+        "title": "CorrectionRequest",
+        "type": "object"
+      },
       "CreateAccountRequest": {
         "additionalProperties": false,
         "examples": [
@@ -1076,8 +1188,6 @@
             "enum": [
               "cash",
               "bank",
-              "savings",
-              "deposit",
               "other_asset"
             ],
             "title": "Kind",
@@ -1214,8 +1324,12 @@
             },
             "interest_rounding_frequency": "capitalization",
             "matures_on": "2027-10-13",
+            "name": "Резерв на год",
             "opened_on": "2026-10-13",
-            "principal_account_id": "018f0000-0000-7000-8000-000000000001",
+            "opening_balance": {
+              "amount": "100000.00",
+              "currency": "RUB"
+            },
             "rate_periods": [
               {
                 "ends_on": "2027-10-13",
@@ -1233,6 +1347,11 @@
           }
         ],
         "properties": {
+          "automatic_interest": {
+            "default": true,
+            "title": "Automatic Interest",
+            "type": "boolean"
+          },
           "capitalization_frequency": {
             "$ref": "#/components/schemas/CapitalizationFrequency"
           },
@@ -1264,15 +1383,19 @@
             "title": "Matures On",
             "type": "string"
           },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
           "opened_on": {
             "format": "date",
             "title": "Opened On",
             "type": "string"
           },
-          "principal_account_id": {
-            "format": "uuid",
-            "title": "Principal Account Id",
-            "type": "string"
+          "opening_balance": {
+            "$ref": "#/components/schemas/MoneyInput"
           },
           "rate_periods": {
             "items": {
@@ -1296,7 +1419,7 @@
           }
         },
         "required": [
-          "principal_account_id",
+          "name",
           "currency",
           "opened_on",
           "matures_on",
@@ -1309,7 +1432,8 @@
           "cashflow_cutoff_time",
           "cashflow_cutoff_inclusive",
           "early_close_rule",
-          "tax_rate"
+          "tax_rate",
+          "opening_balance"
         ],
         "title": "CreateDepositRequest",
         "type": "object"
@@ -1664,6 +1788,14 @@
             "title": "Algorithm Version",
             "type": "string"
           },
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "automatic_interest": {
+            "title": "Automatic Interest",
+            "type": "boolean"
+          },
           "capitalization_frequency": {
             "$ref": "#/components/schemas/CapitalizationFrequency"
           },
@@ -1699,6 +1831,10 @@
             "title": "Matures On",
             "type": "string"
           },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
           "opened_on": {
             "format": "date",
             "title": "Opened On",
@@ -1726,11 +1862,16 @@
           "timezone": {
             "title": "Timezone",
             "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
           }
         },
         "required": [
           "id",
           "principal_account_id",
+          "name",
           "currency",
           "opened_on",
           "matures_on",
@@ -1744,7 +1885,10 @@
           "cashflow_cutoff_inclusive",
           "early_close_rule",
           "tax_rate",
-          "algorithm_version"
+          "algorithm_version",
+          "archived",
+          "version",
+          "automatic_interest"
         ],
         "title": "DepositTermsResponse",
         "type": "object"
@@ -1775,6 +1919,9 @@
           "current_value": {
             "$ref": "#/components/schemas/MoneyResponse"
           },
+          "earned_interest": {
+            "$ref": "#/components/schemas/MoneyResponse"
+          },
           "effective_yield": {
             "anyOf": [
               {
@@ -1785,6 +1932,9 @@
               }
             ],
             "title": "Effective Yield"
+          },
+          "ledger_balance": {
+            "$ref": "#/components/schemas/MoneyResponse"
           },
           "projected_maturity_value": {
             "$ref": "#/components/schemas/MoneyResponse"
@@ -1810,6 +1960,8 @@
           "closes_on",
           "current_principal",
           "accrued_interest",
+          "earned_interest",
+          "ledger_balance",
           "current_value",
           "projected_maturity_value",
           "effective_yield",
@@ -2474,6 +2626,10 @@
       "GoalResponse": {
         "additionalProperties": false,
         "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -2523,7 +2679,8 @@
           "saved_amount",
           "priority",
           "linked_account_id",
-          "version"
+          "version",
+          "archived"
         ],
         "title": "GoalResponse",
         "type": "object"
@@ -4164,6 +4321,18 @@
             ],
             "title": "Reversal Of Id"
           },
+          "reversed_by_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reversed By Id"
+          },
           "source": {
             "title": "Source",
             "type": "string"
@@ -4189,6 +4358,7 @@
           "source",
           "category_id",
           "reversal_of_id",
+          "reversed_by_id",
           "deposit_id",
           "tag_ids",
           "postings",
@@ -4280,6 +4450,44 @@
             ],
             "title": "Archived"
           },
+          "balance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MoneyInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "balance_occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Balance Occurred At"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cash",
+                  "bank",
+                  "other_asset"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
           "name": {
             "anyOf": [
               {
@@ -4303,6 +4511,139 @@
           "version"
         ],
         "title": "UpdateAccountRequest",
+        "type": "object"
+      },
+      "UpdateDepositRequest": {
+        "additionalProperties": false,
+        "examples": [
+          {
+            "capitalization_frequency": "monthly_calendar_end",
+            "cashflow_cutoff_inclusive": true,
+            "cashflow_cutoff_time": "12:00:00",
+            "currency": "RUB",
+            "day_count_convention": "actual_365_fixed",
+            "early_close_rule": {
+              "nominal_rate": {
+                "value": "0.01"
+              },
+              "policy": "reprice"
+            },
+            "interest_rounding_frequency": "capitalization",
+            "matures_on": "2027-10-13",
+            "name": "Резерв на год",
+            "opened_on": "2026-10-13",
+            "opening_balance": {
+              "amount": "100000.00",
+              "currency": "RUB"
+            },
+            "rate_periods": [
+              {
+                "ends_on": "2027-10-13",
+                "nominal_rate": {
+                  "value": "0.12"
+                },
+                "starts_on": "2026-10-13"
+              }
+            ],
+            "rounding_policy": "half_up",
+            "tax_rate": {
+              "value": "0"
+            },
+            "timezone": "Europe/Saratov"
+          }
+        ],
+        "properties": {
+          "automatic_interest": {
+            "default": true,
+            "title": "Automatic Interest",
+            "type": "boolean"
+          },
+          "capitalization_frequency": {
+            "$ref": "#/components/schemas/CapitalizationFrequency"
+          },
+          "cashflow_cutoff_inclusive": {
+            "title": "Cashflow Cutoff Inclusive",
+            "type": "boolean"
+          },
+          "cashflow_cutoff_time": {
+            "format": "time",
+            "title": "Cashflow Cutoff Time",
+            "type": "string"
+          },
+          "currency": {
+            "pattern": "^[A-Z]{3}$",
+            "title": "Currency",
+            "type": "string"
+          },
+          "day_count_convention": {
+            "$ref": "#/components/schemas/DayCountConvention"
+          },
+          "early_close_rule": {
+            "$ref": "#/components/schemas/EarlyCloseRuleInput"
+          },
+          "interest_rounding_frequency": {
+            "$ref": "#/components/schemas/InterestRoundingFrequency"
+          },
+          "matures_on": {
+            "format": "date",
+            "title": "Matures On",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "opened_on": {
+            "format": "date",
+            "title": "Opened On",
+            "type": "string"
+          },
+          "rate_periods": {
+            "items": {
+              "$ref": "#/components/schemas/RatePeriodInput"
+            },
+            "minItems": 1,
+            "title": "Rate Periods",
+            "type": "array"
+          },
+          "rounding_policy": {
+            "$ref": "#/components/schemas/RoundingPolicy"
+          },
+          "tax_rate": {
+            "$ref": "#/components/schemas/RateInput"
+          },
+          "timezone": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "currency",
+          "opened_on",
+          "matures_on",
+          "rate_periods",
+          "capitalization_frequency",
+          "day_count_convention",
+          "rounding_policy",
+          "interest_rounding_frequency",
+          "timezone",
+          "cashflow_cutoff_time",
+          "cashflow_cutoff_inclusive",
+          "early_close_rule",
+          "tax_rate",
+          "version"
+        ],
+        "title": "UpdateDepositRequest",
         "type": "object"
       },
       "UpdateGoalRequest": {
@@ -6846,6 +7187,133 @@
       }
     },
     "/api/v1/deposits/{deposit_id}": {
+      "delete": {
+        "operationId": "archiveDeposit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deposit_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Deposit Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveDepositRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepositTermsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Archive Deposit",
+        "tags": [
+          "deposits"
+        ]
+      },
       "get": {
         "operationId": "getDeposit",
         "parameters": [
@@ -6913,6 +7381,138 @@
           }
         },
         "summary": "Get Deposit",
+        "tags": [
+          "deposits"
+        ]
+      },
+      "put": {
+        "operationId": "updateDeposit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deposit_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Deposit Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDepositRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepositTermsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Update Deposit",
         "tags": [
           "deposits"
         ]
@@ -8094,6 +8694,133 @@
       }
     },
     "/api/v1/goals/{goal_id}": {
+      "delete": {
+        "operationId": "archiveFinancialGoal",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Goal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveGoalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Archive Goal",
+        "tags": [
+          "forecast"
+        ]
+      },
       "get": {
         "operationId": "getFinancialGoal",
         "parameters": [
@@ -10185,6 +10912,157 @@
           }
         },
         "summary": "Get Transaction",
+        "tags": [
+          "ledger"
+        ]
+      }
+    },
+    "/api/v1/transactions/{transaction_id}/correction": {
+      "post": {
+        "operationId": "correctTransaction",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transaction_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Transaction Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Caller-generated key unique to one logical create or reversal command.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Caller-generated key unique to one logical create or reversal command.",
+              "examples": [
+                "account-20261013-001"
+              ],
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[\\x21-\\x7E]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorrectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Correct Transaction",
         "tags": [
           "ledger"
         ]

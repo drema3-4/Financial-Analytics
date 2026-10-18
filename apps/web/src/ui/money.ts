@@ -57,7 +57,21 @@ export function localDateAtNoonUtc(date: string, timezone: string): string {
   return new Date(candidate).toISOString();
 }
 
-export function todayIsoDate(now = new Date()): string {
+export function operationInstant(date: string, timezone: string, now = new Date()): string {
+  return date === todayIsoDate(now, timezone)
+    ? now.toISOString()
+    : localDateAtNoonUtc(date, timezone);
+}
+
+export function todayIsoDate(now = new Date(), timezone?: string): string {
+  if (timezone !== undefined) {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+  }
   const year = String(now.getFullYear()).padStart(4, "0");
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");

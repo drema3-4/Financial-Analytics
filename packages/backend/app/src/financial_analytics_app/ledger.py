@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from uuid import UUID, uuid4
 
+from financial_analytics_app.deposit_ledger import reconcile_interest, validate_deposit_posting
 from financial_analytics_app.ports import (
     AuditEvent,
     IdempotencyRecord,
@@ -25,6 +26,7 @@ from financial_analytics_domain import (
     Money,
     Tag,
     Transaction,
+    TransactionKind,
 )
 from financial_analytics_domain.errors import DomainError
 
@@ -154,6 +156,9 @@ class LedgerService:
         name: str | None,
         archived: bool | None,
         request_id: UUID | None,
+        kind: AccountKind | None = None,
+        balance: Money | None = None,
+        balance_occurred_at: Instant | None = None,
     ) -> Account:
         with self._uow_factory.open(owner_id) as uow:
             account = uow.ledger.get_account(account_id)
@@ -161,13 +166,62 @@ class LedgerService:
                 raise ResourceNotFoundError("account was not found")
             if account.version != version:
                 raise ResourceConflictError("account version is stale")
+            if account.kind is AccountKind.DEPOSIT:
+                raise ResourceConflictError("manage deposits through their terms")
+            if kind is not None and kind not in {
+                AccountKind.BANK,
+                AccountKind.CASH,
+                AccountKind.OTHER_ASSET,
+            }:
+                raise DomainError("ordinary account cannot become a deposit")
             updated = replace(
                 account,
                 name=account.name if name is None else name.strip(),
                 archived=account.archived if archived is None else archived,
+                kind=account.kind if kind is None else kind,
             )
             saved = uow.ledger.save_account(updated)
-            self._audit(uow, actor_id, "ledger.account_updated", "account", account_id, request_id)
+            if balance is not None:
+                if balance.currency != account.currency:
+                    raise DomainError("balance currency must match the account")
+                difference = balance - uow.ledger.rebuild_balances()[account.id]
+                if difference.amount != 0:
+                    equity = self._system_account(
+                        uow, actor_id, AccountKind.SYSTEM_EQUITY, account.currency, request_id
+                    )
+                    adjustment = Transaction.adjustment(
+                        id=self._uuid_factory(),
+                        owner_id=owner_id,
+                        asset=account,
+                        equity_account=equity,
+                        amount=difference,
+                        occurred_at=balance_occurred_at or self._clock(),
+                        posting_ids=(self._uuid_factory(), self._uuid_factory()),
+                        description="Исправление остатка счёта",
+                        entry_source="correction",
+                    )
+                    uow.ledger.add_transaction(adjustment, actor_id=actor_id, request_id=request_id)
+                    self._audit_transaction(uow, actor_id, adjustment, request_id)
+            self._audit(
+                uow,
+                actor_id,
+                "ledger.account_updated",
+                "account",
+                account_id,
+                request_id,
+                payload={
+                    "before": {
+                        "name": account.name,
+                        "kind": account.kind.value,
+                        "archived": account.archived,
+                    },
+                    "after": {
+                        "name": saved.name,
+                        "kind": saved.kind.value,
+                        "archived": saved.archived,
+                    },
+                },
+            )
             uow.commit()
             return saved
 
@@ -565,6 +619,8 @@ class LedgerService:
             original = uow.ledger.get_transaction(transaction_id)
             if original is None:
                 raise ResourceNotFoundError("transaction was not found")
+            if original.reversed_by_id is not None:
+                raise ResourceConflictError("transaction has already been reversed")
             transaction = Transaction.reversal(
                 id=self._uuid_factory(),
                 owner_id=owner_id,
@@ -583,6 +639,88 @@ class LedgerService:
                 request_id,
             )
             return transaction
+
+    def correct_transaction(
+        self,
+        *,
+        owner_id: UUID,
+        actor_id: UUID,
+        transaction_id: UUID,
+        replacement_kind: TransactionKind,
+        account_id: UUID,
+        destination_account_id: UUID | None,
+        category_id: UUID | None,
+        amount: Money,
+        occurred_at: Instant,
+        description: str,
+        reason: str,
+        tag_ids: Sequence[UUID],
+        idempotency_key: str,
+        request_hash: str,
+        request_id: UUID | None,
+    ) -> Transaction:
+        scope = "correct_transaction"
+        with self._uow_factory.open(owner_id) as uow:
+            replay = self._transaction_replay(uow, scope, idempotency_key, request_hash)
+            if replay is not None:
+                return replay
+            original = uow.ledger.get_transaction(transaction_id)
+            if original is None:
+                raise ResourceNotFoundError("transaction was not found")
+            if original.reversed_by_id is not None:
+                raise ResourceConflictError("transaction has already been reversed")
+            if original.kind is TransactionKind.REVERSAL:
+                raise ResourceConflictError("a reversal cannot be corrected")
+            reversal = Transaction.reversal(
+                id=self._uuid_factory(),
+                owner_id=owner_id,
+                original=original,
+                occurred_at=original.occurred_at,
+                posting_ids=tuple(self._uuid_factory() for _ in original.postings),
+                reason=reason,
+            )
+            replacement = self._build_replacement(
+                uow,
+                owner_id=owner_id,
+                actor_id=actor_id,
+                kind=replacement_kind,
+                account_id=account_id,
+                destination_account_id=destination_account_id,
+                category_id=category_id,
+                amount=amount,
+                occurred_at=occurred_at,
+                description=description,
+                tag_ids=tag_ids,
+                request_id=request_id,
+            )
+            uow.ledger.add_transaction(reversal, actor_id=actor_id, request_id=request_id)
+            self._audit_transaction(uow, actor_id, reversal, request_id)
+            uow.ledger.add_transaction(replacement, actor_id=actor_id, request_id=request_id)
+            self._audit_transaction(uow, actor_id, replacement, request_id)
+            self._reconcile_deposits(uow, (reversal, replacement), actor_id, request_id)
+            self._audit(
+                uow,
+                actor_id,
+                "ledger.transaction_corrected",
+                "transaction",
+                original.id,
+                request_id,
+                payload={
+                    "reversal_id": str(reversal.id),
+                    "replacement_id": str(replacement.id),
+                },
+            )
+            self._remember(
+                uow,
+                owner_id,
+                scope,
+                idempotency_key,
+                request_hash,
+                "transaction",
+                replacement.id,
+            )
+            uow.commit()
+            return replacement
 
     def get_transaction(self, owner_id: UUID, transaction_id: UUID) -> Transaction:
         with self._uow_factory.open(owner_id) as uow:
@@ -671,6 +809,7 @@ class LedgerService:
     ) -> None:
         uow.ledger.add_transaction(transaction, actor_id=actor_id, request_id=request_id)
         self._audit_transaction(uow, actor_id, transaction, request_id)
+        self._reconcile_deposits(uow, (transaction,), actor_id, request_id)
         self._remember(
             uow,
             transaction.owner_id,
@@ -682,6 +821,33 @@ class LedgerService:
         )
         uow.commit()
 
+    def _reconcile_deposits(
+        self,
+        uow: UnitOfWork,
+        transactions: tuple[Transaction, ...],
+        actor_id: UUID,
+        request_id: UUID | None,
+    ) -> None:
+        account_ids = {posting.account_id for tx in transactions for posting in tx.postings}
+        for terms in sorted(uow.deposits.list(include_archived=True), key=lambda item: item.id):
+            if terms.principal_account_id not in account_ids:
+                continue
+            for transaction in transactions:
+                if any(p.account_id == terms.principal_account_id for p in transaction.postings):
+                    validate_deposit_posting(terms, transaction)
+            reconcile_interest(
+                uow,
+                terms,
+                now=self._clock(),
+                actor_id=actor_id,
+                uuid_factory=self._uuid_factory,
+                request_id=request_id,
+            )
+            # The projection validates all in-term flows. After maturity, no overdraft is allowed.
+            balance = uow.ledger.rebuild_balances()[terms.principal_account_id]
+            if balance.amount < 0:
+                raise DomainError("deposit withdrawal exceeds its balance")
+
     def _asset_account(self, uow: UnitOfWork, account_id: UUID) -> Account:
         account = uow.ledger.get_account(account_id)
         if account is None or not account.kind.is_asset:
@@ -689,6 +855,100 @@ class LedgerService:
         if account.archived:
             raise ResourceConflictError("archived accounts cannot receive new postings")
         return account
+
+    def _build_replacement(
+        self,
+        uow: UnitOfWork,
+        *,
+        owner_id: UUID,
+        actor_id: UUID,
+        kind: TransactionKind,
+        account_id: UUID,
+        destination_account_id: UUID | None,
+        category_id: UUID | None,
+        amount: Money,
+        occurred_at: Instant,
+        description: str,
+        tag_ids: Sequence[UUID],
+        request_id: UUID | None,
+    ) -> Transaction:
+        asset = self._asset_account(uow, account_id)
+        self._require_tags(uow, tag_ids)
+        transaction_id = self._uuid_factory()
+        posting_ids = (self._uuid_factory(), self._uuid_factory())
+        if kind is TransactionKind.TRANSFER:
+            if destination_account_id is None or category_id is not None:
+                raise DomainError("transfer correction requires destination and no category")
+            return Transaction.transfer(
+                id=transaction_id,
+                owner_id=owner_id,
+                source=asset,
+                destination=self._asset_account(uow, destination_account_id),
+                amount=amount,
+                occurred_at=occurred_at,
+                posting_ids=posting_ids,
+                description=description,
+                entry_source="correction",
+                tag_ids=tag_ids,
+            )
+        if kind is TransactionKind.ADJUSTMENT:
+            if destination_account_id is not None or category_id is not None:
+                raise DomainError("adjustment correction forbids destination and category")
+            equity = self._system_account(
+                uow, actor_id, AccountKind.SYSTEM_EQUITY, asset.currency, request_id
+            )
+            return Transaction.adjustment(
+                id=transaction_id,
+                owner_id=owner_id,
+                asset=asset,
+                equity_account=equity,
+                amount=amount,
+                occurred_at=occurred_at,
+                posting_ids=posting_ids,
+                description=description,
+                entry_source="correction",
+                tag_ids=tag_ids,
+            )
+        if kind not in {TransactionKind.INCOME, TransactionKind.EXPENSE}:
+            raise DomainError("unsupported replacement transaction kind")
+        if category_id is None or destination_account_id is not None:
+            raise DomainError("income and expense correction require exactly one category")
+        category = uow.ledger.get_category(category_id)
+        if category is None:
+            raise ResourceNotFoundError("category was not found")
+        system_kind = (
+            AccountKind.SYSTEM_INCOME
+            if kind is TransactionKind.INCOME
+            else AccountKind.SYSTEM_EXPENSE
+        )
+        system = self._system_account(uow, actor_id, system_kind, asset.currency, request_id)
+        if kind is TransactionKind.INCOME:
+            return Transaction.income(
+                id=transaction_id,
+                owner_id=owner_id,
+                asset=asset,
+                income_account=system,
+                category=category,
+                amount=amount,
+                occurred_at=occurred_at,
+                posting_ids=posting_ids,
+                description=description,
+                entry_source="correction",
+                tag_ids=tag_ids,
+            )
+        return Transaction.expense(
+            id=transaction_id,
+            owner_id=owner_id,
+            asset=asset,
+            expense_account=system,
+            category=category,
+            amount=amount,
+            occurred_at=occurred_at,
+            posting_ids=posting_ids,
+            description=description,
+            entry_source="correction",
+            tag_ids=tag_ids,
+        )
 
     def _require_tags(self, uow: UnitOfWork, tag_ids: Sequence[UUID]) -> None:
         if len(set(tag_ids)) != len(tag_ids):

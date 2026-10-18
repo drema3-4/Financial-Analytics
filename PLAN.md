@@ -18,6 +18,7 @@
 | 11 | Finance UI | операции, расписания, вклады, отчёты, прогнозы, цели, советы | ключевые UI flows работают |
 | 12 | E2E & Hardening | E2E, security, observability, backup/restore | семь сценариев зелёные |
 | 13 | Deployment | локальный и server profiles, SMTP, TLS docs, release | fresh-machine rehearsal |
+| 14 | Core finance workflow correction | отдельные счета/вклады, редактирование и безопасное удаление, единые операции, inline-категории и рабочая аналитика | реальные CRUD/transfer/interest сценарии проходят в браузере |
 
 ## Правила изменения плана
 

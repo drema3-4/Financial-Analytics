@@ -3,9 +3,11 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AccountResponse,
+  CategoryResponse,
   CategoryKind,
   DashboardResponse,
   DepositValuationResponse,
+  DepositTermsResponse,
   FinancialReportResponse,
   ForecastRunResponse,
   GoalResponse,
@@ -27,7 +29,7 @@ import {
   ErrorState,
   InputField,
   LoadingState,
-  localDateAtNoonUtc,
+  operationInstant,
   MoneyInput,
   parseLocalizedDecimal,
   ResponsiveDataView,
@@ -46,6 +48,13 @@ interface WorkspaceProps {
   profile: ProfileResponse;
 }
 
+interface FinancialInstrument {
+  currency: string;
+  id: string;
+  kind: "account" | "deposit";
+  name: string;
+}
+
 const transactionLabels: Record<TransactionKind, string> = {
   income: "Доход",
   expense: "Расход",
@@ -56,6 +65,15 @@ const transactionLabels: Record<TransactionKind, string> = {
 };
 
 export function FinanceWorkspace(props: WorkspaceProps) {
+  const accounts = useQuery({
+    queryKey: ["accounts"],
+    queryFn: () => props.api.listAccounts(),
+    initialData: props.accounts,
+  });
+  return <FinanceRoutes {...props} accounts={accounts.data} />;
+}
+
+function FinanceRoutes(props: WorkspaceProps) {
   switch (props.path) {
     case "/app/dashboard":
       return <DashboardPage {...props} />;
@@ -112,7 +130,7 @@ function DashboardPage({ accounts, api, profile }: WorkspaceProps) {
       eyebrow={`Главная · ${profile.base_currency}`}
       actions={<Freshness value={data.data_through} profile={profile} />}
     >
-      {data.currency_mode !== "single" ? <CurrencyWarning /> : null}
+      {data.currency_mode === "separated_by_currency" ? <CurrencyWarning /> : null}
       {total === undefined ? (
         <EmptyState
           title="Нет проводок за период"
@@ -217,12 +235,17 @@ function AccountsPage(props: WorkspaceProps) {
   const [open, setOpen] = useState(false);
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [name, setName] = useState("");
-  const [kind, setKind] = useState<"cash" | "bank" | "savings" | "deposit" | "other_asset">("bank");
+  const [kind, setKind] = useState<"cash" | "bank" | "other_asset">("bank");
   const [amount, setAmount] = useState("");
   const [categoryName, setCategoryName] = useState("");
   const [categoryKind, setCategoryKind] = useState<CategoryKind>("expense");
   const [groupName, setGroupName] = useState("");
   const [error, setError] = useState<string>();
+  const [editing, setEditing] = useState<AccountResponse>();
+  const [editName, setEditName] = useState("");
+  const [editKind, setEditKind] = useState<"bank" | "cash" | "other_asset">("bank");
+  const [editBalance, setEditBalance] = useState("");
+  const [archiving, setArchiving] = useState<AccountResponse>();
   const categories = useQuery({ queryKey: ["categories"], queryFn: () => api.listCategories() });
   const groups = useQuery({
     queryKey: ["category-groups"],
@@ -233,7 +256,7 @@ function AccountsPage(props: WorkspaceProps) {
     onSuccess: async () => {
       const accounts = await api.listAccounts();
       props.onAccountsChanged(accounts);
-      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      await invalidateFinance(queryClient);
       setOpen(false);
     },
   });
@@ -245,10 +268,37 @@ function AccountsPage(props: WorkspaceProps) {
     mutationFn: api.createCategory.bind(api),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["categories"] }),
   });
+  const updateAccount = useMutation({
+    mutationFn: ({ account, archived }: { account: AccountResponse; archived?: boolean }) => {
+      const balance = parseLocalizedDecimal(editBalance, profile.locale);
+      if (archived === undefined && balance === null) throw new Error("invalid_amount");
+      return api.updateAccount(account.id, {
+        version: account.version,
+        name: archived === undefined ? editName : null,
+        kind: archived === undefined ? editKind : null,
+        balance:
+          archived === undefined && balance !== null
+            ? { amount: balance, currency: account.currency }
+            : null,
+        balance_occurred_at: archived === undefined ? new Date().toISOString() : null,
+        archived: archived ?? null,
+      });
+    },
+    onSuccess: async () => {
+      const accounts = await api.listAccounts();
+      props.onAccountsChanged(accounts);
+      setEditing(undefined);
+      setArchiving(undefined);
+      await invalidateFinance(queryClient);
+    },
+  });
   async function submitAccount(event: FormEvent) {
     event.preventDefault();
     setError(undefined);
-    const parsed = amount === "" ? undefined : parseLocalizedDecimal(amount, profile.locale);
+    const parsed =
+      amount === "" || /^0(?:[.,]0+)?$/.test(amount.trim())
+        ? undefined
+        : parseLocalizedDecimal(amount, profile.locale);
     if (parsed === null) {
       setError("Проверьте сумму.");
       return;
@@ -261,7 +311,9 @@ function AccountsPage(props: WorkspaceProps) {
         opening_balance:
           parsed === undefined ? null : { amount: parsed, currency: profile.base_currency },
         opening_balance_occurred_at:
-          parsed === undefined ? null : localDateAtNoonUtc(todayIsoDate(), profile.timezone),
+          parsed === undefined
+            ? null
+            : operationInstant(todayIsoDate(new Date(), profile.timezone), profile.timezone),
       });
     } catch (cause) {
       setError(apiErrorMessage(cause));
@@ -302,6 +354,35 @@ function AccountsPage(props: WorkspaceProps) {
             numeric: true,
             render: (row: AccountResponse) => money(row.balance, profile),
           },
+          {
+            key: "actions",
+            label: "Действия",
+            render: (row: AccountResponse) => (
+              <div className="inline-actions">
+                <Button
+                  variant="quiet"
+                  onClick={() => {
+                    setEditName(row.name);
+                    setEditKind(
+                      row.kind === "cash" || row.kind === "other_asset" ? row.kind : "bank",
+                    );
+                    setEditBalance(row.balance.amount);
+                    setEditing(row);
+                  }}
+                >
+                  Изменить
+                </Button>
+                <Button
+                  variant="quiet"
+                  onClick={() => {
+                    setArchiving(row);
+                  }}
+                >
+                  Удалить
+                </Button>
+              </div>
+            ),
+          },
         ]}
         getKey={(row) => row.id}
         rows={props.accounts}
@@ -332,8 +413,6 @@ function AccountsPage(props: WorkspaceProps) {
           >
             <option value="bank">Банковский</option>
             <option value="cash">Наличные</option>
-            <option value="savings">Накопительный</option>
-            <option value="deposit">Вклад</option>
             <option value="other_asset">Иной актив</option>
           </SelectField>
           <MoneyInput
@@ -348,6 +427,72 @@ function AccountsPage(props: WorkspaceProps) {
             Создать счёт
           </Button>
         </form>
+      </Dialog>
+      <Dialog
+        open={editing !== undefined}
+        onClose={() => {
+          setEditing(undefined);
+        }}
+        title="Изменить счёт"
+        description="Изменение остатка сохранится отдельной корректирующей операцией."
+      >
+        <form
+          className="form-stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (editing !== undefined) updateAccount.mutate({ account: editing });
+          }}
+        >
+          <InputField
+            label="Название счёта"
+            required
+            value={editName}
+            onChange={(event) => {
+              setEditName(event.target.value);
+            }}
+          />
+          <SelectField
+            label="Тип счёта"
+            value={editKind}
+            onChange={(event) => {
+              setEditKind(event.target.value as typeof editKind);
+            }}
+          >
+            <option value="bank">Банковский</option>
+            <option value="cash">Наличные</option>
+            <option value="other_asset">Иной актив</option>
+          </SelectField>
+          <MoneyInput
+            label="Текущий остаток"
+            currency={editing?.currency ?? profile.base_currency}
+            locale={profile.locale}
+            value={editBalance}
+            onChange={setEditBalance}
+          />
+          <FormError error={mutationError(updateAccount.error)} />
+          <Button loading={updateAccount.isPending} type="submit">
+            Сохранить изменения
+          </Button>
+        </form>
+      </Dialog>
+      <Dialog
+        open={archiving !== undefined}
+        onClose={() => {
+          setArchiving(undefined);
+        }}
+        title="Удалить счёт?"
+        description="Счёт исчезнет из активных списков, но его операции и аудит сохранятся."
+      >
+        <FormError error={mutationError(updateAccount.error)} />
+        <Button
+          loading={updateAccount.isPending}
+          onClick={() => {
+            if (archiving !== undefined)
+              updateAccount.mutate({ account: archiving, archived: true });
+          }}
+        >
+          Удалить счёт
+        </Button>
       </Dialog>
       <Dialog
         open={categoryOpen}
@@ -435,32 +580,56 @@ function TransactionsPage({ accounts, api, profile }: WorkspaceProps) {
   const [history, setHistory] = useState<(string | undefined)[]>([]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [kind, setKind] = useState<"income" | "expense" | "transfer" | "adjustment">("expense");
-  const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
-  const [destinationId, setDestinationId] = useState(accounts[1]?.id ?? "");
-  const [categoryId, setCategoryId] = useState("");
+  const [selectedAccountId, setAccountId] = useState(accounts[0]?.id ?? "");
+  const [selectedDestinationId, setDestinationId] = useState(accounts[1]?.id ?? "");
+  const [categoryName, setCategoryName] = useState("");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
-  const [occurredOn, setOccurredOn] = useState(todayIsoDate());
+  const [occurredOn, setOccurredOn] = useState(todayIsoDate(new Date(), profile.timezone));
   const [reversing, setReversing] = useState<TransactionResponse>();
   const [reason, setReason] = useState("");
+  const [editing, setEditing] = useState<TransactionResponse>();
   const [error, setError] = useState<string>();
   const transactions = useQuery({
     queryKey: ["transactions", applied],
     queryFn: () => api.listTransactions(applied),
   });
   const categories = useQuery({ queryKey: ["categories"], queryFn: () => api.listCategories() });
+  const deposits = useQuery({ queryKey: ["deposits"], queryFn: () => api.listDeposits() });
+  const instruments = financialInstruments(accounts, deposits.data ?? []);
+  const accountId = instruments.some((item) => item.id === selectedAccountId)
+    ? selectedAccountId
+    : (instruments[0]?.id ?? "");
+  const destinationId = instruments.some(
+    (item) => item.id === selectedDestinationId && item.id !== accountId,
+  )
+    ? selectedDestinationId
+    : (instruments.find((item) => item.id !== accountId)?.id ?? "");
+  async function resolveCategory(): Promise<CategoryResponse> {
+    const normalized = categoryName.trim();
+    if (normalized === "") throw new Error("category_required");
+    const existing = (categories.data ?? []).find(
+      (category) =>
+        category.kind === kind &&
+        category.name.localeCompare(normalized, profile.locale, { sensitivity: "accent" }) === 0,
+    );
+    if (existing !== undefined) return existing;
+    const created = await api.createCategory({ name: normalized, kind: kind as CategoryKind });
+    await queryClient.invalidateQueries({ queryKey: ["categories"] });
+    return created;
+  }
   const create = useMutation({
     mutationFn: async () => {
       const parsed = parseLocalizedDecimal(amount, profile.locale);
       if (parsed === null) throw new Error("invalid_amount");
-      const occurred_at = localDateAtNoonUtc(occurredOn, profile.timezone);
+      const occurred_at = operationInstant(occurredOn, profile.timezone);
       if (kind === "transfer")
         return api.createTransfer({
           source_account_id: accountId,
           destination_account_id: destinationId,
           money: {
             amount: parsed,
-            currency: accountCurrency(accounts, accountId, profile.base_currency),
+            currency: instrumentCurrency(instruments, accountId, profile.base_currency),
           },
           occurred_at,
           description,
@@ -471,19 +640,19 @@ function TransactionsPage({ accounts, api, profile }: WorkspaceProps) {
           account_id: accountId,
           money: {
             amount: parsed,
-            currency: accountCurrency(accounts, accountId, profile.base_currency),
+            currency: instrumentCurrency(instruments, accountId, profile.base_currency),
           },
           occurred_at,
           description,
         });
       }
-      if (categoryId === "") throw new Error("category_required");
+      const category = await resolveCategory();
       return api.createOperation(kind, {
         account_id: accountId,
-        category_id: categoryId,
+        category_id: category.id,
         money: {
           amount: parsed,
-          currency: accountCurrency(accounts, accountId, profile.base_currency),
+          currency: instrumentCurrency(instruments, accountId, profile.base_currency),
         },
         occurred_at,
         description,
@@ -493,12 +662,41 @@ function TransactionsPage({ accounts, api, profile }: WorkspaceProps) {
       setEditorOpen(false);
       setAmount("");
       setDescription("");
+      setEditing(undefined);
+      await invalidateFinance(queryClient);
+    },
+  });
+  const correct = useMutation({
+    mutationFn: async () => {
+      if (editing === undefined) throw new Error("missing_transaction");
+      const parsed = parseLocalizedDecimal(amount, profile.locale);
+      if (parsed === null) throw new Error("invalid_amount");
+      const category = kind === "income" || kind === "expense" ? await resolveCategory() : null;
+      return api.correctTransaction(editing.id, {
+        kind,
+        account_id: accountId,
+        destination_account_id: kind === "transfer" ? destinationId : null,
+        category_id: category?.id ?? null,
+        money: {
+          amount: parsed,
+          currency: instrumentCurrency(instruments, accountId, profile.base_currency),
+        },
+        occurred_at: operationInstant(occurredOn, profile.timezone),
+        description,
+        reason,
+        tag_ids: [],
+      });
+    },
+    onSuccess: async () => {
+      setEditorOpen(false);
+      setEditing(undefined);
+      setReason("");
       await invalidateFinance(queryClient);
     },
   });
   const reverse = useMutation({
     mutationFn: () =>
-      api.reverseTransaction(reversing!.id, { occurred_at: new Date().toISOString(), reason }),
+      api.reverseTransaction(reversing!.id, { occurred_at: reversing!.occurred_at, reason }),
     onSuccess: async () => {
       setReversing(undefined);
       setReason("");
@@ -518,11 +716,42 @@ function TransactionsPage({ accounts, api, profile }: WorkspaceProps) {
       setError(apiErrorMessage(cause));
     }
   }
+  function beginCorrection(row: TransactionResponse) {
+    if (!["income", "expense", "transfer", "adjustment"].includes(row.kind)) return;
+    const knownIds = new Set(instruments.map((item) => item.id));
+    const assetPostings = row.postings.filter((posting) => knownIds.has(posting.account_id));
+    const primary =
+      row.kind === "transfer"
+        ? assetPostings.find((posting) => posting.money.amount.startsWith("-"))
+        : assetPostings[0];
+    const destination =
+      row.kind === "transfer"
+        ? assetPostings.find((posting) => !posting.money.amount.startsWith("-"))
+        : undefined;
+    if (primary === undefined) {
+      setError("Не удалось определить актив операции для исправления.");
+      return;
+    }
+    setEditing(row);
+    setKind(row.kind as "income" | "expense" | "transfer" | "adjustment");
+    setAccountId(primary.account_id);
+    setDestinationId(destination?.account_id ?? "");
+    setCategoryName(
+      (categories.data ?? []).find((category) => category.id === row.category_id)?.name ?? "",
+    );
+    setAmount(
+      row.kind === "adjustment" ? primary.money.amount : primary.money.amount.replace(/^-/, ""),
+    );
+    setDescription(row.description);
+    setOccurredOn(todayIsoDate(new Date(row.occurred_at), profile.timezone));
+    setReason("Исправление данных операции");
+    setEditorOpen(true);
+  }
   const rows = transactions.data?.items ?? [];
   return (
     <Page
       title="Журнал операций"
-      eyebrow="Проводки без удаления"
+      eyebrow="Доходы, расходы и переводы"
       actions={
         <>
           <Button variant="secondary" onClick={() => void exportCsv()}>
@@ -530,6 +759,16 @@ function TransactionsPage({ accounts, api, profile }: WorkspaceProps) {
           </Button>
           <Button
             onClick={() => {
+              setEditing(undefined);
+              setReason("");
+              setKind("expense");
+              setAmount("");
+              setDescription("");
+              setCategoryName("");
+              setOccurredOn(todayIsoDate(new Date(), profile.timezone));
+              setError(undefined);
+              create.reset();
+              correct.reset();
               setEditorOpen(true);
             }}
           >
@@ -562,9 +801,9 @@ function TransactionsPage({ accounts, api, profile }: WorkspaceProps) {
           }}
         >
           <option value="">Все счета</option>
-          {accounts.map((account) => (
-            <option key={account.id} value={account.id}>
-              {account.name}
+          {instruments.map((instrument) => (
+            <option key={instrument.id} value={instrument.id}>
+              {instrument.name}
             </option>
           ))}
         </SelectField>
@@ -638,23 +877,44 @@ function TransactionsPage({ accounts, api, profile }: WorkspaceProps) {
                 label: "Сумма",
                 numeric: true,
                 render: (row: TransactionResponse) =>
-                  row.postings.map((posting) => money(posting.money, profile)).join(" / "),
+                  row.postings
+                    .filter((posting) => instruments.some((item) => item.id === posting.account_id))
+                    .map(
+                      (posting) =>
+                        `${instruments.find((item) => item.id === posting.account_id)?.name ?? "Актив"}: ${money(posting.money, profile)}`,
+                    )
+                    .join(" → "),
               },
               {
                 key: "actions",
                 label: "Действия",
                 render: (row: TransactionResponse) =>
-                  row.kind === "reversal" || row.reversal_of_id !== null ? (
-                    <span>История сохранена</span>
+                  row.kind === "reversal" || row.reversed_by_id != null ? (
+                    <span>
+                      {row.kind === "reversal" ? "Сторно" : "Отменена"} · история сохранена
+                    </span>
+                  ) : row.kind === "interest" ? (
+                    <span>По условиям вклада</span>
                   ) : (
-                    <Button
-                      variant="quiet"
-                      onClick={() => {
-                        setReversing(row);
-                      }}
-                    >
-                      Исправить / сторнировать
-                    </Button>
+                    <div className="inline-actions">
+                      <Button
+                        variant="quiet"
+                        onClick={() => {
+                          beginCorrection(row);
+                        }}
+                      >
+                        Изменить
+                      </Button>
+                      <Button
+                        variant="quiet"
+                        onClick={() => {
+                          setReason("Удаление ошибочной операции");
+                          setReversing(row);
+                        }}
+                      >
+                        Удалить
+                      </Button>
+                    </div>
                   ),
               },
             ]}
@@ -692,16 +952,22 @@ function TransactionsPage({ accounts, api, profile }: WorkspaceProps) {
         open={editorOpen}
         onClose={() => {
           setEditorOpen(false);
+          setEditing(undefined);
         }}
-        title="Новая операция"
-        description="Баланс и отчёты пересчитает сервер по проводкам."
+        title={editing === undefined ? "Новая операция" : "Изменить операцию"}
+        description={
+          editing === undefined
+            ? "Баланс и отчёты пересчитает сервер по проводкам."
+            : "Сервер атомарно сторнирует исходную проводку и создаст исправленную."
+        }
       >
         <form
           className="form-stack"
           onSubmit={(e) => {
             e.preventDefault();
             setError(undefined);
-            void create.mutateAsync().catch((cause) => {
+            const mutation = editing === undefined ? create : correct;
+            void mutation.mutateAsync().catch((cause) => {
               setError(
                 cause instanceof Error && cause.message === "invalid_amount"
                   ? "Проверьте сумму."
@@ -733,9 +999,9 @@ function TransactionsPage({ accounts, api, profile }: WorkspaceProps) {
               setAccountId(e.target.value);
             }}
           >
-            {accounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name}
+            {instruments.map((instrument) => (
+              <option key={instrument.id} value={instrument.id}>
+                {instrument.name}
               </option>
             ))}
           </SelectField>
@@ -747,35 +1013,37 @@ function TransactionsPage({ accounts, api, profile }: WorkspaceProps) {
                 setDestinationId(e.target.value);
               }}
             >
-              {accounts
-                .filter((account) => account.id !== accountId)
-                .map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.name}
+              {instruments
+                .filter((instrument) => instrument.id !== accountId)
+                .map((instrument) => (
+                  <option key={instrument.id} value={instrument.id}>
+                    {instrument.name}
                   </option>
                 ))}
             </SelectField>
           ) : kind === "adjustment" ? null : (
-            <SelectField
-              label="Категория"
-              value={categoryId}
-              onChange={(e) => {
-                setCategoryId(e.target.value);
-              }}
-            >
-              <option value="">Выберите категорию</option>
-              {(categories.data ?? [])
-                .filter((category) => category.kind === kind)
-                .map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-            </SelectField>
+            <>
+              <InputField
+                label="Категория"
+                list="transaction-category-suggestions"
+                hint="Выберите предложение или введите новое название — категория создастся при сохранении."
+                value={categoryName}
+                onChange={(e) => {
+                  setCategoryName(e.target.value);
+                }}
+              />
+              <datalist id="transaction-category-suggestions">
+                {(categories.data ?? [])
+                  .filter((category) => category.kind === kind)
+                  .map((category) => (
+                    <option key={category.id} value={category.name} />
+                  ))}
+              </datalist>
+            </>
           )}
           <MoneyInput
             label="Сумма"
-            currency={accountCurrency(accounts, accountId, profile.base_currency)}
+            currency={instrumentCurrency(instruments, accountId, profile.base_currency)}
             locale={profile.locale}
             value={amount}
             onChange={setAmount}
@@ -795,9 +1063,19 @@ function TransactionsPage({ accounts, api, profile }: WorkspaceProps) {
               setDescription(e.target.value);
             }}
           />
-          <FormError error={error ?? mutationError(create.error)} />
-          <Button loading={create.isPending} type="submit">
-            Провести
+          {editing === undefined ? null : (
+            <InputField
+              label="Причина исправления"
+              required
+              value={reason}
+              onChange={(event) => {
+                setReason(event.target.value);
+              }}
+            />
+          )}
+          <FormError error={error ?? mutationError(create.error ?? correct.error)} />
+          <Button loading={create.isPending || correct.isPending} type="submit">
+            {editing === undefined ? "Провести" : "Сохранить исправление"}
           </Button>
         </form>
       </Dialog>
@@ -806,18 +1084,18 @@ function TransactionsPage({ accounts, api, profile }: WorkspaceProps) {
         onClose={() => {
           setReversing(undefined);
         }}
-        title="Сторнировать операцию?"
-        description="Исходная проводка останется в журнале. Сервер создаст обратную проводку; баланс и все отчёты изменятся."
+        title="Удалить операцию?"
+        description="Исходная проводка останется в аудите. Сервер создаст сторно; баланс и отчёты пересчитаются."
       >
         <form
           className="form-stack"
           onSubmit={(e) => {
             e.preventDefault();
-            void reverse.mutateAsync();
+            reverse.mutate();
           }}
         >
           <InputField
-            label="Причина исправления"
+            label="Причина удаления"
             required
             value={reason}
             onChange={(e) => {
@@ -826,7 +1104,7 @@ function TransactionsPage({ accounts, api, profile }: WorkspaceProps) {
           />
           <FormError error={mutationError(reverse.error)} />
           <Button loading={reverse.isPending} type="submit">
-            Подтвердить последствия и сторнировать
+            Удалить операцию (сторнировать)
           </Button>
         </form>
       </Dialog>
@@ -838,19 +1116,29 @@ function RecurringPage({ accounts, api, profile }: WorkspaceProps) {
   const queryClient = useQueryClient();
   const rules = useQuery({ queryKey: ["recurring"], queryFn: () => api.listRecurringRules() });
   const categories = useQuery({ queryKey: ["categories"], queryFn: () => api.listCategories() });
+  const deposits = useQuery({ queryKey: ["deposits"], queryFn: () => api.listDeposits() });
+  const instruments = financialInstruments(accounts, deposits.data ?? []);
   const [open, setOpen] = useState(false);
   const [frequency, setFrequency] = useState<RecurrenceFrequency>("monthly");
   const [kind, setKind] = useState<"income" | "expense" | "transfer">("expense");
-  const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
-  const [destinationId, setDestinationId] = useState(accounts[1]?.id ?? "");
-  const [categoryId, setCategoryId] = useState("");
+  const [selectedAccountId, setAccountId] = useState(accounts[0]?.id ?? "");
+  const [selectedDestinationId, setDestinationId] = useState(accounts[1]?.id ?? "");
+  const accountId = instruments.some((item) => item.id === selectedAccountId)
+    ? selectedAccountId
+    : (instruments[0]?.id ?? "");
+  const destinationId = instruments.some(
+    (item) => item.id === selectedDestinationId && item.id !== accountId,
+  )
+    ? selectedDestinationId
+    : (instruments.find((item) => item.id !== accountId)?.id ?? "");
+  const [categoryName, setCategoryName] = useState("");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
-  const [startsOn, setStartsOn] = useState(todayIsoDate());
+  const [startsOn, setStartsOn] = useState(todayIsoDate(new Date(), profile.timezone));
   const [localTime, setLocalTime] = useState("09:00");
   const [missingPolicy, setMissingPolicy] = useState<"last_day" | "skip">("last_day");
   const [preview, setPreview] = useState<PreviewOccurrenceResponse[]>([]);
-  const payload = () => ({
+  const payload = (categoryId: string | null) => ({
     frequency,
     starts_on: startsOn,
     local_time: localTime,
@@ -863,7 +1151,7 @@ function RecurringPage({ accounts, api, profile }: WorkspaceProps) {
       category_id: kind === "transfer" ? null : categoryId,
       money: {
         amount: parseLocalizedDecimal(amount, profile.locale) ?? amount,
-        currency: accountCurrency(accounts, accountId, profile.base_currency),
+        currency: instrumentCurrency(instruments, accountId, profile.base_currency),
       },
       description,
     },
@@ -881,7 +1169,34 @@ function RecurringPage({ accounts, api, profile }: WorkspaceProps) {
     onSuccess: setPreview,
   });
   const create = useMutation({
-    mutationFn: () => api.createRecurringRule(payload()),
+    mutationFn: async () => {
+      const parsed = parseLocalizedDecimal(amount, profile.locale);
+      if (parsed === null) throw new Error("invalid_amount");
+      let categoryId: string | null = null;
+      if (kind !== "transfer") {
+        const normalized = categoryName.trim();
+        if (normalized === "") throw new Error("category_required");
+        const existing = (categories.data ?? []).find(
+          (category) =>
+            category.kind === kind &&
+            category.name.localeCompare(normalized, profile.locale, { sensitivity: "base" }) === 0,
+        );
+        const category = existing ?? (await api.createCategory({ name: normalized, kind: kind }));
+        categoryId = category.id;
+        if (existing === undefined)
+          await queryClient.invalidateQueries({ queryKey: ["categories"] });
+      }
+      return api.createRecurringRule({
+        ...payload(categoryId),
+        operation: {
+          ...payload(categoryId).operation,
+          money: {
+            amount: parsed,
+            currency: instrumentCurrency(instruments, accountId, profile.base_currency),
+          },
+        },
+      });
+    },
     onSuccess: async () => {
       setOpen(false);
       await queryClient.invalidateQueries({ queryKey: ["recurring"] });
@@ -973,7 +1288,7 @@ function RecurringPage({ accounts, api, profile }: WorkspaceProps) {
           className="form-stack"
           onSubmit={(e) => {
             e.preventDefault();
-            void create.mutateAsync();
+            create.mutate();
           }}
         >
           <div className="form-grid">
@@ -1008,9 +1323,9 @@ function RecurringPage({ accounts, api, profile }: WorkspaceProps) {
               setAccountId(e.target.value);
             }}
           >
-            {accounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name}
+            {instruments.map((instrument) => (
+              <option key={instrument.id} value={instrument.id}>
+                {instrument.name}
               </option>
             ))}
           </SelectField>
@@ -1022,35 +1337,37 @@ function RecurringPage({ accounts, api, profile }: WorkspaceProps) {
                 setDestinationId(e.target.value);
               }}
             >
-              {accounts
-                .filter((account) => account.id !== accountId)
-                .map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.name}
+              {instruments
+                .filter((instrument) => instrument.id !== accountId)
+                .map((instrument) => (
+                  <option key={instrument.id} value={instrument.id}>
+                    {instrument.name}
                   </option>
                 ))}
             </SelectField>
           ) : (
-            <SelectField
-              label="Категория"
-              value={categoryId}
-              onChange={(e) => {
-                setCategoryId(e.target.value);
-              }}
-            >
-              <option value="">Выберите</option>
-              {(categories.data ?? [])
-                .filter((category) => category.kind === kind)
-                .map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-            </SelectField>
+            <>
+              <InputField
+                label="Категория"
+                list="recurring-category-suggestions"
+                hint="Выберите существующую или введите новую категорию."
+                value={categoryName}
+                onChange={(e) => {
+                  setCategoryName(e.target.value);
+                }}
+              />
+              <datalist id="recurring-category-suggestions">
+                {(categories.data ?? [])
+                  .filter((category) => category.kind === kind)
+                  .map((category) => (
+                    <option key={category.id} value={category.name} />
+                  ))}
+              </datalist>
+            </>
           )}
           <MoneyInput
             label="Сумма"
-            currency={accountCurrency(accounts, accountId, profile.base_currency)}
+            currency={instrumentCurrency(instruments, accountId, profile.base_currency)}
             locale={profile.locale}
             value={amount}
             onChange={setAmount}
@@ -1119,37 +1436,41 @@ function RecurringPage({ accounts, api, profile }: WorkspaceProps) {
   );
 }
 
-function DepositsPage({ accounts, api, profile }: WorkspaceProps) {
+function DepositsPage({ api, profile }: WorkspaceProps) {
   const queryClient = useQueryClient();
   const deposits = useQuery({ queryKey: ["deposits"], queryFn: () => api.listDeposits() });
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string>();
-  const [accountId, setAccountId] = useState(
-    accounts.find((item) => item.kind === "deposit")?.id ?? accounts[0]?.id ?? "",
-  );
-  const [openedOn, setOpenedOn] = useState(todayIsoDate());
-  const [maturesOn, setMaturesOn] = useState(nextYearIso());
+  const [editing, setEditing] = useState<DepositTermsResponse>();
+  const [archiving, setArchiving] = useState<DepositTermsResponse>();
+  const [name, setName] = useState("");
+  const [openingBalance, setOpeningBalance] = useState("");
+  const [openedOn, setOpenedOn] = useState(todayIsoDate(new Date(), profile.timezone));
+  const [maturesOn, setMaturesOn] = useState(nextYearIso(profile.timezone));
   const [rate, setRate] = useState("10");
-  const [firstRateEnds, setFirstRateEnds] = useState(nextYearIso());
+  const [firstRateEnds, setFirstRateEnds] = useState(nextYearIso(profile.timezone));
   const [secondRateEnabled, setSecondRateEnabled] = useState(false);
   const [secondRateStarts, setSecondRateStarts] = useState("");
   const [secondRateEnds, setSecondRateEnds] = useState("");
   const [secondRate, setSecondRate] = useState("");
   const [taxRate, setTaxRate] = useState("0");
+  const [automaticInterest, setAutomaticInterest] = useState(true);
   const [capitalization, setCapitalization] = useState<"daily" | "monthly_calendar_end">(
     "monthly_calendar_end",
   );
   const [error, setError] = useState<string>();
+  const selectedDeposit = (deposits.data ?? []).find((item) => item.id === selected);
+  const asOf = todayIsoDate(new Date(), profile.timezone);
   const valuation = useQuery({
-    queryKey: ["deposit-valuation", selected, todayIsoDate()],
-    queryFn: () => api.getDepositValuation(selected!, todayIsoDate()),
+    queryKey: ["deposit-valuation", selected, asOf],
+    queryFn: () => api.getDepositValuation(selected!, asOf),
     enabled: selected !== undefined,
   });
-  const create = useMutation({
-    mutationFn: () =>
-      api.createDeposit({
-        principal_account_id: accountId,
-        currency: accountCurrency(accounts, accountId, profile.base_currency),
+  const save = useMutation({
+    mutationFn: async () => {
+      const terms = {
+        name,
+        currency: editing?.currency ?? profile.base_currency,
         opened_on: openedOn,
         matures_on: maturesOn,
         rate_periods: [
@@ -1169,35 +1490,90 @@ function DepositsPage({ accounts, api, profile }: WorkspaceProps) {
             : []),
         ],
         capitalization_frequency: capitalization,
-        day_count_convention: "actual_365_fixed",
-        rounding_policy: "half_even",
-        interest_rounding_frequency: "capitalization",
-        timezone: profile.timezone,
-        cashflow_cutoff_time: "23:59:59",
-        cashflow_cutoff_inclusive: true,
-        early_close_rule: { policy: "forfeit_interest", nominal_rate: null },
+        day_count_convention: editing?.day_count_convention ?? ("actual_365_fixed" as const),
+        rounding_policy: editing?.rounding_policy ?? ("half_even" as const),
+        interest_rounding_frequency:
+          editing?.interest_rounding_frequency ?? ("capitalization" as const),
+        timezone: editing?.timezone ?? profile.timezone,
+        cashflow_cutoff_time: editing?.cashflow_cutoff_time ?? "23:59:59",
+        cashflow_cutoff_inclusive: editing?.cashflow_cutoff_inclusive ?? true,
+        early_close_rule: {
+          policy: editing?.early_close_rule.policy ?? ("forfeit_interest" as const),
+          nominal_rate:
+            editing?.early_close_rule.nominal_rate == null
+              ? null
+              : { value: editing.early_close_rule.nominal_rate },
+        },
         tax_rate: { value: normalizeRate(taxRate) },
-      }),
+        automatic_interest: automaticInterest,
+      };
+      if (editing !== undefined)
+        return api.updateDeposit(editing.id, { ...terms, version: editing.version });
+      const parsed = parseLocalizedDecimal(openingBalance, profile.locale);
+      if (parsed === null || parsed.startsWith("-")) throw new Error("invalid_amount");
+      return api.createDeposit({
+        ...terms,
+        opening_balance: { amount: parsed, currency: profile.base_currency },
+      });
+    },
     onSuccess: async (value) => {
       setOpen(false);
+      setEditing(undefined);
       setSelected(value.id);
-      await queryClient.invalidateQueries({ queryKey: ["deposits"] });
+      await invalidateFinance(queryClient);
     },
   });
+  const archive = useMutation({
+    mutationFn: (deposit: DepositTermsResponse) => api.archiveDeposit(deposit.id, deposit.version),
+    onSuccess: async () => {
+      setArchiving(undefined);
+      setSelected(undefined);
+      await invalidateFinance(queryClient);
+    },
+  });
+  function newDeposit() {
+    setEditing(undefined);
+    setName("");
+    setOpeningBalance("");
+    setOpenedOn(todayIsoDate(new Date(), profile.timezone));
+    setMaturesOn(nextYearIso(profile.timezone));
+    setRate("10");
+    setTaxRate("0");
+    setAutomaticInterest(true);
+    setSecondRateEnabled(false);
+    setCapitalization("monthly_calendar_end");
+    setError(undefined);
+    setOpen(true);
+  }
+  function editDeposit(deposit: DepositTermsResponse) {
+    const first = deposit.rate_periods[0];
+    const second = deposit.rate_periods[1];
+    setEditing(deposit);
+    setName(deposit.name);
+    setOpenedOn(deposit.opened_on);
+    setMaturesOn(deposit.matures_on);
+    setRate(rateToPercentInput(first?.nominal_rate ?? "0"));
+    setTaxRate(rateToPercentInput(deposit.tax_rate));
+    setAutomaticInterest(deposit.automatic_interest);
+    setCapitalization(deposit.capitalization_frequency);
+    setSecondRateEnabled(second !== undefined);
+    setFirstRateEnds(first?.ends_on ?? deposit.matures_on);
+    setSecondRateStarts(second?.starts_on ?? "");
+    setSecondRateEnds(second?.ends_on ?? "");
+    setSecondRate(rateToPercentInput(second?.nominal_rate ?? "0"));
+    setError(undefined);
+    setOpen(true);
+  }
   return (
     <Page
       title="Вклады"
-      eyebrow="Условия и сверка"
-      actions={
-        <Button
-          onClick={() => {
-            setOpen(true);
-          }}
-        >
-          Добавить вклад
-        </Button>
-      }
+      eyebrow="Сложные проценты"
+      actions={<Button onClick={newDeposit}>Добавить вклад</Button>}
     >
+      <Notice title="Вклады и счета разделены">
+        Начальная сумма задаётся здесь. Пополнения, снятия и переводы между счетами и вкладами
+        создаются во вкладке «Операции».
+      </Notice>
       {deposits.isLoading ? (
         <LoadingState label="Загружаем вклады" />
       ) : deposits.error ? (
@@ -1205,7 +1581,7 @@ function DepositsPage({ accounts, api, profile }: WorkspaceProps) {
       ) : (deposits.data ?? []).length === 0 ? (
         <EmptyState
           title="Вкладов пока нет"
-          description="Добавьте условия, периоды ставок и правила округления."
+          description="Добавьте начальную сумму, ставку и срок — график рассчитается автоматически."
         />
       ) : (
         <div className="deposit-layout">
@@ -1219,7 +1595,7 @@ function DepositsPage({ accounts, api, profile }: WorkspaceProps) {
                 }}
                 type="button"
               >
-                <strong>{accountName(accounts, deposit.principal_account_id)}</strong>
+                <strong>{deposit.name}</strong>
                 <span>
                   {deposit.opened_on} — {deposit.matures_on}
                 </span>
@@ -1231,21 +1607,42 @@ function DepositsPage({ accounts, api, profile }: WorkspaceProps) {
             ))}
           </nav>
           <div>
-            {selected === undefined ? (
-              <EmptyState title="Выберите вклад" description="Справа появятся оценка и график." />
-            ) : valuation.isLoading ? (
-              <LoadingState label="Строим график на сервере" />
-            ) : valuation.error ? (
-              <QueryError error={valuation.error} retry={() => void valuation.refetch()} />
-            ) : valuation.data === undefined ? null : (
+            {selectedDeposit === undefined ? (
+              <EmptyState title="Выберите вклад" description="Справа появятся расчёт и график." />
+            ) : (
               <>
-                <DepositDetails value={valuation.data} profile={profile} />
-                <DepositActivityForm
-                  accounts={accounts}
-                  api={api}
-                  depositId={selected}
-                  profile={profile}
-                />
+                {selectedDeposit.automatic_interest ? null : (
+                  <Notice title="Вклад из предыдущей версии">
+                    Автоматические проводки пока выключены. Проверьте сумму и условия через
+                    «Изменить вклад» и включите начисления. Если несколько старых вкладов используют
+                    один остаток, сначала удалите дубли.
+                  </Notice>
+                )}
+                <div className="section-actions">
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      editDeposit(selectedDeposit);
+                    }}
+                  >
+                    Изменить вклад
+                  </Button>
+                  <Button
+                    variant="quiet"
+                    onClick={() => {
+                      setArchiving(selectedDeposit);
+                    }}
+                  >
+                    Удалить вклад
+                  </Button>
+                </div>
+                {valuation.isLoading ? (
+                  <LoadingState label="Рассчитываем сложные проценты" />
+                ) : valuation.error ? (
+                  <QueryError error={valuation.error} retry={() => void valuation.refetch()} />
+                ) : valuation.data === undefined ? null : (
+                  <DepositDetails value={valuation.data} profile={profile} />
+                )}
               </>
             )}
           </div>
@@ -1256,36 +1653,50 @@ function DepositsPage({ accounts, api, profile }: WorkspaceProps) {
         onClose={() => {
           setOpen(false);
         }}
-        title="Условия вклада"
-        description="Ставка передаётся как decimal-доля; график и доходность рассчитывает сервер."
+        title={editing === undefined ? "Новый вклад" : "Изменить вклад"}
+        description="Введите ставку как банковский процент: 10 означает 10% годовых."
       >
         <form
           className="form-stack"
-          onSubmit={(e) => {
-            e.preventDefault();
+          onSubmit={(event) => {
+            event.preventDefault();
             setError(undefined);
             if (compareIsoDates(openedOn, maturesOn) >= 0) {
               setError("Дата окончания должна быть позже открытия.");
               return;
             }
-            void create.mutateAsync().catch((cause) => {
-              setError(apiErrorMessage(cause));
+            void save.mutateAsync().catch((cause) => {
+              setError(
+                cause instanceof Error && cause.message === "invalid_amount"
+                  ? "Введите положительную начальную сумму."
+                  : apiErrorMessage(cause),
+              );
             });
           }}
         >
-          <SelectField
-            label="Счёт вклада"
-            value={accountId}
-            onChange={(e) => {
-              setAccountId(e.target.value);
+          <InputField
+            label="Название вклада"
+            required
+            value={name}
+            onChange={(event) => {
+              setName(event.target.value);
             }}
-          >
-            {accounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name} · {account.currency}
-              </option>
-            ))}
-          </SelectField>
+          />
+          {editing === undefined ? (
+            <MoneyInput
+              label="Начальная сумма"
+              currency={profile.base_currency}
+              locale={profile.locale}
+              value={openingBalance}
+              onChange={setOpeningBalance}
+            />
+          ) : null}
+          {editing === undefined ? (
+            <p className="field-note">
+              Если деньги сейчас на обычном счёте, укажите 0 и затем оформите перевод во вклад в
+              разделе «Операции».
+            </p>
+          ) : null}
           <div className="form-grid">
             <DateControl
               label="Открытие"
@@ -1304,63 +1715,20 @@ function DepositsPage({ accounts, api, profile }: WorkspaceProps) {
               }}
             />
           </div>
-          <label className="consent-row">
-            <input
-              type="checkbox"
-              checked={secondRateEnabled}
-              onChange={(event) => {
-                setSecondRateEnabled(event.target.checked);
-              }}
-            />
-            <span>
-              <strong>Добавить второй период ставки</strong>
-              <small>Границы периодов вводятся явно и проверяются сервером.</small>
-            </span>
-          </label>
-          {secondRateEnabled ? (
-            <div className="form-grid">
-              <DateControl
-                label="Конец первого периода"
-                value={firstRateEnds}
-                onChange={(event) => {
-                  setFirstRateEnds(event.target.value);
-                }}
-              />
-              <DateControl
-                label="Начало второго периода"
-                value={secondRateStarts}
-                onChange={(event) => {
-                  setSecondRateStarts(event.target.value);
-                }}
-              />
-              <DateControl
-                label="Конец второго периода"
-                value={secondRateEnds}
-                onChange={(event) => {
-                  setSecondRateEnds(event.target.value);
-                }}
-              />
-              <InputField
-                label="Ставка второго периода, %"
-                value={secondRate}
-                onChange={(event) => {
-                  setSecondRate(event.target.value);
-                }}
-              />
-            </div>
-          ) : null}
           <div className="form-grid">
             <InputField
               label="Номинальная ставка, %"
               inputMode="decimal"
+              required
               value={rate}
               onChange={(e) => {
                 setRate(e.target.value);
               }}
             />
             <InputField
-              label="Налог, % (явный параметр)"
+              label="Налог, %"
               inputMode="decimal"
+              required
               value={taxRate}
               onChange={(e) => {
                 setTaxRate(e.target.value);
@@ -1374,18 +1742,87 @@ function DepositsPage({ accounts, api, profile }: WorkspaceProps) {
               setCapitalization(e.target.value as typeof capitalization);
             }}
           >
-            <option value="monthly_calendar_end">В конце календарного месяца</option>
+            <option value="monthly_calendar_end">Ежемесячно</option>
             <option value="daily">Ежедневно</option>
           </SelectField>
-          <Notice title="Зафиксированные правила">
-            Actual/365 Fixed, округление half-even при капитализации; досрочное закрытие теряет
-            проценты. Timezone: {profile.timezone}.
-          </Notice>
-          <FormError error={error ?? mutationError(create.error)} />
-          <Button loading={create.isPending} type="submit">
-            Создать и построить график
+          <label className="consent-row">
+            <input
+              type="checkbox"
+              checked={secondRateEnabled}
+              onChange={(event) => {
+                setSecondRateEnabled(event.target.checked);
+              }}
+            />
+            <span>
+              <strong>Ставка меняется в течение срока</strong>
+              <small>Добавить второй непрерывный период ставки.</small>
+            </span>
+          </label>
+          {secondRateEnabled ? (
+            <div className="form-grid">
+              <DateControl
+                label="Конец первого периода"
+                value={firstRateEnds}
+                onChange={(e) => {
+                  setFirstRateEnds(e.target.value);
+                }}
+              />
+              <DateControl
+                label="Начало второго периода"
+                value={secondRateStarts}
+                onChange={(e) => {
+                  setSecondRateStarts(e.target.value);
+                }}
+              />
+              <DateControl
+                label="Конец второго периода"
+                value={secondRateEnds}
+                onChange={(e) => {
+                  setSecondRateEnds(e.target.value);
+                }}
+              />
+              <InputField
+                label="Ставка второго периода, %"
+                value={secondRate}
+                onChange={(e) => {
+                  setSecondRate(e.target.value);
+                }}
+              />
+            </div>
+          ) : null}
+          <FormError error={error ?? mutationError(save.error)} />
+          <label className="consent-row">
+            <input
+              type="checkbox"
+              checked={automaticInterest}
+              onChange={(event) => {
+                setAutomaticInterest(event.target.checked);
+              }}
+            />
+            <span>Автоматически начислять проценты и добавлять их в журнал</span>
+          </label>
+          <Button loading={save.isPending} type="submit">
+            {editing === undefined ? "Создать вклад" : "Сохранить изменения"}
           </Button>
         </form>
+      </Dialog>
+      <Dialog
+        open={archiving !== undefined}
+        onClose={() => {
+          setArchiving(undefined);
+        }}
+        title="Удалить вклад?"
+        description="Вклад исчезнет из активного списка. Операции и история изменений сохранятся."
+      >
+        <FormError error={mutationError(archive.error)} />
+        <Button
+          loading={archive.isPending}
+          onClick={() => {
+            if (archiving !== undefined) archive.mutate(archiving);
+          }}
+        >
+          Удалить вклад
+        </Button>
       </Dialog>
     </Page>
   );
@@ -1405,7 +1842,7 @@ function DepositDetails({
     >
       <div className="metric-strip">
         <Metric label="Текущая стоимость" value={money(value.current_value, profile)} />
-        <Metric label="Начисленный доход" value={money(value.accrued_interest, profile)} />
+        <Metric label="Начисленный доход" value={money(value.earned_interest, profile)} />
         <Metric label="К погашению" value={money(value.projected_maturity_value, profile)} />
         <Metric
           label="Эффективная доходность"
@@ -1416,9 +1853,10 @@ function DepositDetails({
           }
         />
       </div>
-      <Notice title="Как получена доходность">
-        Эффективная доходность рассчитана сервером из денежных потоков и дат. Это не обещание
-        будущего результата.
+      <Notice title="Автоматический расчёт">
+        Проценты за завершённые периоды автоматически добавляются в журнал и участвуют в следующих
+        начислениях. Остаток после капитализации: {money(value.ledger_balance, profile)}. Условия:
+        Actual/365, округление до копеек при капитализации.
       </Notice>
       <h3>План начислений</h3>
       <ResponsiveDataView
@@ -1455,171 +1893,17 @@ function DepositDetails({
         getKey={(row) => `${row.accrual_starts_on}-${row.posting_date}`}
         rows={value.schedule}
       />
-      <h3>План / факт</h3>
-      {value.reconciliation.length === 0 ? (
-        <p className="field-note">Фактических начислений пока нет.</p>
-      ) : (
-        <ResponsiveDataView
-          caption="Сверка процентов"
-          columns={[
-            {
-              key: "date",
-              label: "Дата",
-              render: (row: DepositValuationResponse["reconciliation"][number]) => row.posting_date,
-            },
-            {
-              key: "planned",
-              label: "План",
-              numeric: true,
-              render: (row: DepositValuationResponse["reconciliation"][number]) =>
-                money(row.planned_interest, profile),
-            },
-            {
-              key: "actual",
-              label: "Факт",
-              numeric: true,
-              render: (row: DepositValuationResponse["reconciliation"][number]) =>
-                money(row.actual_interest, profile),
-            },
-            {
-              key: "variance",
-              label: "Отклонение",
-              numeric: true,
-              render: (row: DepositValuationResponse["reconciliation"][number]) =>
-                money(row.variance, profile),
-            },
-          ]}
-          getKey={(row) => row.posting_date}
-          rows={value.reconciliation}
-        />
-      )}
-    </Section>
-  );
-}
-
-function DepositActivityForm({
-  accounts,
-  api,
-  depositId,
-  profile,
-}: {
-  accounts: AccountResponse[];
-  api: FinanceApi;
-  depositId: string;
-  profile: ProfileResponse;
-}) {
-  const queryClient = useQueryClient();
-  const [mode, setMode] = useState<"cashflow" | "interest">("cashflow");
-  const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
-  const [amount, setAmount] = useState("");
-  const [occurredOn, setOccurredOn] = useState(todayIsoDate());
-  const [description, setDescription] = useState("");
-  const record = useMutation({
-    mutationFn: async () => {
-      const parsed = parseLocalizedDecimal(amount, profile.locale);
-      if (parsed === null) throw new Error("invalid_amount");
-      const moneyInput = {
-        amount: parsed,
-        currency: accountCurrency(accounts, accountId, profile.base_currency),
-      };
-      const occurred_at = localDateAtNoonUtc(occurredOn, profile.timezone);
-      return mode === "interest"
-        ? api.recordDepositInterest(depositId, {
-            money: moneyInput,
-            occurred_at,
-            description,
-          })
-        : api.recordDepositCashflow(depositId, {
-            counterparty_account_id: accountId,
-            money: moneyInput,
-            occurred_at,
-            description,
-          });
-    },
-    onSuccess: async () => {
-      setAmount("");
-      await queryClient.invalidateQueries({ queryKey: ["deposit-valuation", depositId] });
-    },
-  });
-  return (
-    <Section
-      title="Денежный поток / факт"
-      subtitle="Пополнение — положительная сумма, частичное снятие — отрицательная"
-    >
-      <form
-        className="form-stack"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void record.mutateAsync();
-        }}
-      >
-        <SelectField
-          label="Тип записи"
-          value={mode}
-          onChange={(event) => {
-            setMode(event.target.value as typeof mode);
-          }}
-        >
-          <option value="cashflow">Пополнение или снятие</option>
-          <option value="interest">Фактические проценты</option>
-        </SelectField>
-        {mode === "cashflow" ? (
-          <SelectField
-            label="Счёт-контрагент"
-            value={accountId}
-            onChange={(event) => {
-              setAccountId(event.target.value);
-            }}
-          >
-            {accounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name}
-              </option>
-            ))}
-          </SelectField>
-        ) : null}
-        <MoneyInput
-          label="Сумма"
-          currency={accountCurrency(accounts, accountId, profile.base_currency)}
-          locale={profile.locale}
-          value={amount}
-          onChange={setAmount}
-        />
-        <DateControl
-          label="Дата"
-          value={occurredOn}
-          onChange={(event) => {
-            setOccurredOn(event.target.value);
-          }}
-        />
-        <InputField
-          label="Описание"
-          required
-          value={description}
-          onChange={(event) => {
-            setDescription(event.target.value);
-          }}
-        />
-        <FormError
-          error={
-            record.error instanceof Error && record.error.message === "invalid_amount"
-              ? "Проверьте сумму."
-              : mutationError(record.error)
-          }
-        />
-        <Button loading={record.isPending} type="submit">
-          Записать факт
-        </Button>
-      </form>
     </Section>
   );
 }
 
 function AnalyticsPage({ api, profile }: WorkspaceProps) {
-  const [start, setStart] = useState(firstDayOfMonth());
-  const [end, setEnd] = useState(todayIsoDate());
+  const initialRange = currentAnalyticsRange("month", profile.timezone);
+  const [start, setStart] = useState(initialRange.start);
+  const [end, setEnd] = useState(initialRange.end);
   const [granularity, setGranularity] = useState<PeriodGranularity>("month");
   const [params, setParams] = useState({ start, end, granularity });
+  const [periodError, setPeriodError] = useState<string>();
   const report = useQuery({
     queryKey: ["analytics", params],
     queryFn: () => api.getFinancialReport(params.start, params.end, params.granularity),
@@ -1634,6 +1918,11 @@ function AnalyticsPage({ api, profile }: WorkspaceProps) {
         className="filter-bar"
         onSubmit={(e) => {
           e.preventDefault();
+          if (!analyticsRangeIsAligned(start, end, granularity)) {
+            setPeriodError(analyticsAlignmentHint(granularity));
+            return;
+          }
+          setPeriodError(undefined);
           setParams({ start, end, granularity });
         }}
       >
@@ -1645,7 +1934,7 @@ function AnalyticsPage({ api, profile }: WorkspaceProps) {
           }}
         />
         <DateControl
-          label="Конец периода"
+          label="Конец периода (не включая)"
           value={end}
           onChange={(e) => {
             setEnd(e.target.value);
@@ -1655,7 +1944,11 @@ function AnalyticsPage({ api, profile }: WorkspaceProps) {
           label="Группировка"
           value={granularity}
           onChange={(e) => {
-            setGranularity(e.target.value as PeriodGranularity);
+            const next = e.target.value as PeriodGranularity;
+            const range = currentAnalyticsRange(next, profile.timezone);
+            setGranularity(next);
+            setStart(range.start);
+            setEnd(range.end);
           }}
         >
           <option value="day">День</option>
@@ -1664,6 +1957,7 @@ function AnalyticsPage({ api, profile }: WorkspaceProps) {
         </SelectField>
         <Button type="submit">Показать</Button>
       </form>
+      <FormError error={periodError} />
       {report.isLoading ? (
         <LoadingState label="Строим отчёт по проводкам" />
       ) : report.error ? (
@@ -1684,7 +1978,7 @@ function AnalyticsReport({
 }) {
   return (
     <>
-      {data.currency_mode !== "single" ? <CurrencyWarning /> : null}
+      {data.currency_mode === "separated_by_currency" ? <CurrencyWarning /> : null}
       <div className="chart-grid">
         {data.totals.map((total) => (
           <Section
@@ -1814,7 +2108,7 @@ function ForecastPage({ accounts, api, profile }: WorkspaceProps) {
   });
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [horizon, setHorizon] = useState(nextYearIso());
+  const [horizon, setHorizon] = useState(nextYearIso(profile.timezone));
   const [incomeChange, setIncomeChange] = useState("0");
   const [expenseChange, setExpenseChange] = useState("0");
   const [inflation, setInflation] = useState("0");
@@ -2190,49 +2484,78 @@ function GoalsPage({ accounts, api, profile }: WorkspaceProps) {
   const queryClient = useQueryClient();
   const goals = useQuery({ queryKey: ["goals"], queryFn: () => api.listFinancialGoals() });
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<GoalResponse>();
+  const [archiving, setArchiving] = useState<GoalResponse>();
   const [name, setName] = useState("");
   const [target, setTarget] = useState("");
   const [saved, setSaved] = useState("0");
-  const [date, setDate] = useState(nextYearIso());
+  const [date, setDate] = useState(nextYearIso(profile.timezone));
   const [priority, setPriority] = useState("1");
   const [linked, setLinked] = useState("");
+  const goalHorizon = (goals.data ?? []).reduce(
+    (latest, goal) => (goal.target_date > latest ? goal.target_date : latest),
+    date,
+  );
   const forecast = useQuery({
-    queryKey: ["goals-plan", date],
-    queryFn: () => api.getForecast(profile.base_currency, date),
+    queryKey: ["goals-plan", goalHorizon, goals.data],
+    queryFn: () => api.getForecast(profile.base_currency, goalHorizon),
     enabled: (goals.data?.length ?? 0) > 0,
   });
-  const create = useMutation({
+  const saveGoal = useMutation({
     mutationFn: () => {
       const targetAmount = parseLocalizedDecimal(target, profile.locale);
       const savedAmount = parseLocalizedDecimal(saved, profile.locale);
       if (targetAmount === null || savedAmount === null) throw new Error("invalid_amount");
-      return api.createFinancialGoal({
+      const payload = {
         name,
         target: { amount: targetAmount, currency: profile.base_currency },
         target_date: date,
         saved_amount: { amount: savedAmount, currency: profile.base_currency },
         priority: Number(priority),
         linked_account_id: linked || null,
-      });
+      };
+      return editing === undefined
+        ? api.createFinancialGoal(payload)
+        : api.updateFinancialGoal(editing.id, { ...payload, version: editing.version });
     },
     onSuccess: async () => {
       setOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["goals"] });
+      setEditing(undefined);
+      await invalidateFinance(queryClient);
     },
   });
+  const archiveGoal = useMutation({
+    mutationFn: (goal: GoalResponse) => api.archiveFinancialGoal(goal.id, goal.version),
+    onSuccess: async () => {
+      setArchiving(undefined);
+      await invalidateFinance(queryClient);
+    },
+  });
+  function newGoal() {
+    setEditing(undefined);
+    setName("");
+    setTarget("");
+    setSaved("0");
+    setDate(nextYearIso(profile.timezone));
+    setPriority("1");
+    setLinked("");
+    setOpen(true);
+  }
+  function editGoal(goal: GoalResponse) {
+    setEditing(goal);
+    setName(goal.name);
+    setTarget(goal.target.amount);
+    setSaved(goal.saved_amount.amount);
+    setDate(goal.target_date);
+    setPriority(String(goal.priority));
+    setLinked(goal.linked_account_id ?? "");
+    setOpen(true);
+  }
   return (
     <Page
       title="Финансовые цели"
       eyebrow="Приоритетные стратегии"
-      actions={
-        <Button
-          onClick={() => {
-            setOpen(true);
-          }}
-        >
-          Новая цель
-        </Button>
-      }
+      actions={<Button onClick={newGoal}>Новая цель</Button>}
     >
       {goals.isLoading ? (
         <LoadingState label="Загружаем цели" />
@@ -2261,6 +2584,30 @@ function GoalsPage({ accounts, api, profile }: WorkspaceProps) {
                 `${money(row.saved_amount, profile)} / ${money(row.target, profile)}`,
             },
             { key: "date", label: "Срок", render: (row: GoalResponse) => row.target_date },
+            {
+              key: "actions",
+              label: "Действия",
+              render: (row: GoalResponse) => (
+                <div className="inline-actions">
+                  <Button
+                    variant="quiet"
+                    onClick={() => {
+                      editGoal(row);
+                    }}
+                  >
+                    Изменить
+                  </Button>
+                  <Button
+                    variant="quiet"
+                    onClick={() => {
+                      setArchiving(row);
+                    }}
+                  >
+                    Удалить
+                  </Button>
+                </div>
+              ),
+            },
           ]}
           getKey={(row) => row.id}
           rows={goals.data ?? []}
@@ -2271,7 +2618,7 @@ function GoalsPage({ accounts, api, profile }: WorkspaceProps) {
       ) : forecast.data === undefined ? null : (
         <Section
           title="План по приоритетам"
-          subtitle={forecast.data.goal_plan.allocation_explanation}
+          subtitle="Свободные средства распределяются по приоритету целей и срокам. Для каждой цели показаны необходимый взнос и недостача."
         >
           <ResponsiveDataView
             caption="Расчёт достижимости целей"
@@ -2320,15 +2667,16 @@ function GoalsPage({ accounts, api, profile }: WorkspaceProps) {
         open={open}
         onClose={() => {
           setOpen(false);
+          setEditing(undefined);
         }}
-        title="Новая цель"
+        title={editing === undefined ? "Новая цель" : "Изменить цель"}
         description="Достижимость, взнос и недостачу рассчитает сервер."
       >
         <form
           className="form-stack"
           onSubmit={(e) => {
             e.preventDefault();
-            void create.mutateAsync();
+            saveGoal.mutate();
           }}
         >
           <InputField
@@ -2389,15 +2737,33 @@ function GoalsPage({ accounts, api, profile }: WorkspaceProps) {
           </SelectField>
           <FormError
             error={
-              create.error instanceof Error && create.error.message === "invalid_amount"
+              saveGoal.error instanceof Error && saveGoal.error.message === "invalid_amount"
                 ? "Проверьте суммы."
-                : mutationError(create.error)
+                : mutationError(saveGoal.error)
             }
           />
-          <Button loading={create.isPending} type="submit">
-            Создать цель
+          <Button loading={saveGoal.isPending} type="submit">
+            {editing === undefined ? "Создать цель" : "Сохранить изменения"}
           </Button>
         </form>
+      </Dialog>
+      <Dialog
+        open={archiving !== undefined}
+        onClose={() => {
+          setArchiving(undefined);
+        }}
+        title="Удалить цель?"
+        description="Цель исчезнет из активного плана, а запись об удалении останется в аудите."
+      >
+        <FormError error={mutationError(archiveGoal.error)} />
+        <Button
+          loading={archiveGoal.isPending}
+          onClick={() => {
+            if (archiving !== undefined) archiveGoal.mutate(archiving);
+          }}
+        >
+          Удалить цель
+        </Button>
       </Dialog>
     </Page>
   );
@@ -2414,7 +2780,7 @@ function AdvicePage({ api, profile }: WorkspaceProps) {
     mutationFn: () =>
       api.generateAdvice({
         currency: profile.base_currency,
-        through: nextYearIso(),
+        through: nextYearIso(profile.timezone),
         question: question || null,
         allow_external_user_text: consent,
       }),
@@ -2665,7 +3031,25 @@ function money(value: { amount: string; currency: string }, profile: ProfileResp
 
 function percent(value: string, locale: string): string {
   const separator = locale.startsWith("en") ? "." : ",";
-  return `${value.replace(".", separator)}%`;
+  return `${rateToPercentInput(value).replace(".", separator)}%`;
+}
+
+function rateToPercentInput(value: string): string {
+  const normalized = value.trim();
+  const match = /^(?<sign>-?)(?<whole>\d+)(?:\.(?<fraction>\d+))?$/u.exec(normalized);
+  if (match?.groups === undefined) return normalized;
+  const whole = match.groups.whole ?? "0";
+  const fraction = match.groups.fraction ?? "";
+  const digits = `${whole}${fraction}`;
+  const point = whole.length + 2;
+  const expanded = point >= digits.length ? digits.padEnd(point, "0") : digits;
+  const raw =
+    point >= expanded.length ? expanded : `${expanded.slice(0, point)}.${expanded.slice(point)}`;
+  const cleaned = raw
+    .replace(/^0+(?=\d)/u, "")
+    .replace(/\.0+$/u, "")
+    .replace(/(\.\d*?)0+$/u, "$1");
+  return `${match.groups.sign}${cleaned || "0"}`;
 }
 
 function normalizeRate(value: string): string {
@@ -2703,8 +3087,31 @@ function periodLabel(data: DashboardResponse): string {
 function accountCurrency(accounts: AccountResponse[], id: string, fallback: string): string {
   return accounts.find((item) => item.id === id)?.currency ?? fallback;
 }
-function accountName(accounts: AccountResponse[], id: string): string {
-  return accounts.find((item) => item.id === id)?.name ?? "Счёт";
+function financialInstruments(
+  accounts: AccountResponse[],
+  deposits: DepositTermsResponse[],
+): FinancialInstrument[] {
+  return [
+    ...accounts.map((account) => ({
+      id: account.id,
+      name: account.name,
+      currency: account.currency,
+      kind: "account" as const,
+    })),
+    ...deposits.map((deposit) => ({
+      id: deposit.principal_account_id,
+      name: `${deposit.name} · вклад`,
+      currency: deposit.currency,
+      kind: "deposit" as const,
+    })),
+  ];
+}
+function instrumentCurrency(
+  instruments: FinancialInstrument[],
+  id: string,
+  fallback: string,
+): string {
+  return instruments.find((item) => item.id === id)?.currency ?? fallback;
 }
 function accountKind(value: string): string {
   return (
@@ -2725,17 +3132,65 @@ function frequencyLabel(value: RecurrenceFrequency): string {
   ];
 }
 function mutationError(error: unknown): string | undefined {
+  if (error instanceof Error) {
+    if (error.message === "invalid_amount") return "Проверьте сумму.";
+    if (error.message === "category_required")
+      return "Введите название категории или выберите существующую.";
+  }
   return error === null || error === undefined ? undefined : apiErrorMessage(error);
 }
 function compareIsoDates(left: string, right: string): number {
   return left.localeCompare(right);
 }
-function firstDayOfMonth(): string {
-  return `${todayIsoDate().slice(0, 8)}01`;
+function currentAnalyticsRange(
+  granularity: PeriodGranularity,
+  timezone: string,
+): { start: string; end: string } {
+  const today = new Date(`${todayIsoDate(new Date(), timezone)}T00:00:00Z`);
+  if (granularity === "day") {
+    return { start: isoDate(today), end: isoDate(addUtcDays(today, 1)) };
+  }
+  if (granularity === "week") {
+    const mondayOffset = (today.getUTCDay() + 6) % 7;
+    const start = addUtcDays(today, -mondayOffset);
+    return { start: isoDate(start), end: isoDate(addUtcDays(start, 7)) };
+  }
+  const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1));
+  return { start: isoDate(start), end: isoDate(end) };
 }
-function nextYearIso(): string {
-  const today = todayIsoDate();
-  return `${String(Number(today.slice(0, 4)) + 1).padStart(4, "0")}${today.slice(4)}`;
+function analyticsRangeIsAligned(
+  start: string,
+  end: string,
+  granularity: PeriodGranularity,
+): boolean {
+  if (start >= end) return false;
+  if (granularity === "day") return true;
+  const startDate = new Date(`${start}T00:00:00Z`);
+  const endDate = new Date(`${end}T00:00:00Z`);
+  if (granularity === "week") return startDate.getUTCDay() === 1 && endDate.getUTCDay() === 1;
+  return startDate.getUTCDate() === 1 && endDate.getUTCDate() === 1;
+}
+function analyticsAlignmentHint(granularity: PeriodGranularity): string {
+  if (granularity === "week")
+    return "Для недельной группировки начало и конец периода должны приходиться на понедельник.";
+  if (granularity === "month")
+    return "Для месячной группировки начало и конец периода должны быть первым числом месяца.";
+  return "Конец периода должен быть позже начала.";
+}
+function addUtcDays(value: Date, days: number): Date {
+  return new Date(value.getTime() + days * 86_400_000);
+}
+function isoDate(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+function nextYearIso(timezone?: string): string {
+  const today = todayIsoDate(new Date(), timezone);
+  const year = Number(today.slice(0, 4)) + 1;
+  const month = Number(today.slice(5, 7));
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const day = Math.min(Number(today.slice(8, 10)), lastDay);
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 function confidenceLabel(value: "low" | "medium" | "high"): string {
   return { low: "низкая", medium: "средняя", high: "высокая" }[value];
@@ -2745,5 +3200,11 @@ async function invalidateFinance(queryClient: ReturnType<typeof useQueryClient>)
     queryClient.invalidateQueries({ queryKey: ["transactions"] }),
     queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
     queryClient.invalidateQueries({ queryKey: ["analytics"] }),
+    queryClient.invalidateQueries({ queryKey: ["accounts"] }),
+    queryClient.invalidateQueries({ queryKey: ["deposits"] }),
+    queryClient.invalidateQueries({ queryKey: ["deposit-valuation"] }),
+    queryClient.invalidateQueries({ queryKey: ["goals"] }),
+    queryClient.invalidateQueries({ queryKey: ["goals-plan"] }),
+    queryClient.invalidateQueries({ queryKey: ["forecast"] }),
   ]);
 }

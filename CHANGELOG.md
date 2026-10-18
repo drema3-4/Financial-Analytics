@@ -2,7 +2,16 @@
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed — core finance workflows (stage 14)
+
+- Standalone deposits with opening amounts, exact percentage display, editable terms and
+  automatic, idempotent compound-interest ledger postings; ordinary accounts earn no interest.
+- Unified account/deposit operations; inline new/existing categories in operations and rules.
+- Full operation corrections and deletion by reversal; account/deposit/goal editing and archival.
+- Aligned analytics date ranges, refreshed balances, unique dialog accessibility IDs and
+  timezone-correct operation dates; access to all sections on mobile.
+- Tenant-scoped CRUD, concurrency, migration and real-browser regression coverage. Existing
+  deposit balances are preserved; legacy automatic accrual requires owner review and opt-in.
 
 ## [0.2.0] — proposed 2026-10-17
 

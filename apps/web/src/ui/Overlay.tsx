@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 
 import { Button } from "./Button";
 
@@ -20,6 +20,9 @@ export function Dialog({
   variant = "dialog",
 }: DialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const id = useId();
+  const titleId = `${id}-title`;
+  const descriptionId = `${id}-description`;
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -43,8 +46,8 @@ export function Dialog({
 
   return (
     <dialog
-      aria-describedby={description === undefined ? undefined : "overlay-description"}
-      aria-labelledby="overlay-title"
+      aria-describedby={description === undefined ? undefined : descriptionId}
+      aria-labelledby={titleId}
       className={`overlay overlay--${variant}`}
       onCancel={(event) => {
         event.preventDefault();
@@ -56,8 +59,8 @@ export function Dialog({
       <div className="overlay__header">
         <div>
           <p className="eyebrow">Личное пространство</p>
-          <h2 id="overlay-title">{title}</h2>
-          {description === undefined ? null : <p id="overlay-description">{description}</p>}
+          <h2 id={titleId}>{title}</h2>
+          {description === undefined ? null : <p id={descriptionId}>{description}</p>}
         </div>
         <Button aria-label="Закрыть" className="icon-button" onClick={onClose} variant="quiet">
           <span aria-hidden="true">×</span>

@@ -13,6 +13,7 @@ import {
   type CreateCategoryGroupRequest,
   type CreateCategoryRequest,
   type CreateDepositRequest,
+  type CorrectionRequest,
   type CreateRecurringRuleRequest,
   type DashboardResponse,
   type DepositCashflowRequest,
@@ -45,6 +46,9 @@ import {
   type TransactionPageResponse,
   type TransactionResponse,
   type TransferRequest,
+  type UpdateAccountRequest,
+  type UpdateDepositRequest,
+  type UpdateGoalRequest,
 } from "@financial-analytics/api-contracts";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -69,6 +73,7 @@ export interface FinanceApi {
   createInvitation(payload: InvitationRequest): Promise<InvitationResponse>;
   listAccounts(): Promise<AccountResponse[]>;
   createAccount(payload: CreateAccountRequest): Promise<AccountResponse>;
+  updateAccount(accountId: string, payload: UpdateAccountRequest): Promise<AccountResponse>;
   getDashboard(periodStart?: string, periodEnd?: string): Promise<DashboardResponse>;
   listCategoryGroups(): ReturnType<FinancialAnalyticsClient["listCategoryGroups"]>;
   createCategoryGroup(
@@ -86,6 +91,10 @@ export interface FinanceApi {
   createTransfer(payload: TransferRequest): Promise<TransactionResponse>;
   createAdjustment(payload: AdjustmentRequest): Promise<TransactionResponse>;
   reverseTransaction(transactionId: string, payload: ReversalRequest): Promise<TransactionResponse>;
+  correctTransaction(
+    transactionId: string,
+    payload: CorrectionRequest,
+  ): Promise<TransactionResponse>;
   exportTransactions(filters?: TransactionFilters): Promise<string>;
   listRecurringRules(): Promise<RecurringRuleResponse[]>;
   previewRecurringOccurrences(
@@ -98,6 +107,8 @@ export interface FinanceApi {
   ): Promise<RecurringRuleResponse>;
   listDeposits(): Promise<DepositTermsResponse[]>;
   createDeposit(payload: CreateDepositRequest): Promise<DepositTermsResponse>;
+  updateDeposit(depositId: string, payload: UpdateDepositRequest): Promise<DepositTermsResponse>;
+  archiveDeposit(depositId: string, version: number): Promise<DepositTermsResponse>;
   getDepositValuation(depositId: string, asOf: string): Promise<DepositValuationResponse>;
   recordDepositCashflow(
     depositId: string,
@@ -126,6 +137,8 @@ export interface FinanceApi {
   ): Promise<ForecastComparisonResponse>;
   listFinancialGoals(): Promise<GoalResponse[]>;
   createFinancialGoal(payload: GoalInput): Promise<GoalResponse>;
+  updateFinancialGoal(goalId: string, payload: UpdateGoalRequest): Promise<GoalResponse>;
+  archiveFinancialGoal(goalId: string, version: number): Promise<GoalResponse>;
   getAdviceProviderStatus(): Promise<AdviceProviderStatusResponse>;
   generateAdvice(payload: AdviceRequest): Promise<AdviceResponse>;
   logout(): Promise<void>;
@@ -254,6 +267,16 @@ export class BrowserFinanceApi implements FinanceApi {
     );
   }
 
+  updateAccount(accountId: string, payload: UpdateAccountRequest): Promise<AccountResponse> {
+    return this.withSessionRecovery(() =>
+      this.client.updateAccount({
+        accountId,
+        xCSRFToken: this.csrfToken(),
+        body: payload,
+      }),
+    );
+  }
+
   getDashboard(periodStart?: string, periodEnd?: string): Promise<DashboardResponse> {
     return this.withSessionRecovery(() =>
       this.client.getAnalyticsDashboard({
@@ -321,6 +344,16 @@ export class BrowserFinanceApi implements FinanceApi {
       }),
     );
   }
+  correctTransaction(transactionId: string, payload: CorrectionRequest) {
+    return this.mutate((token, key) =>
+      this.client.correctTransaction({
+        transactionId,
+        idempotencyKey: key,
+        xCSRFToken: token,
+        body: payload,
+      }),
+    );
+  }
   exportTransactions(filters: TransactionFilters = {}) {
     return this.withSessionRecovery(() =>
       this.client.exportTransactionsCsv({
@@ -358,6 +391,20 @@ export class BrowserFinanceApi implements FinanceApi {
   createDeposit(payload: CreateDepositRequest) {
     return this.mutate((token, key) =>
       this.client.createDeposit({ idempotencyKey: key, xCSRFToken: token, body: payload }),
+    );
+  }
+  updateDeposit(depositId: string, payload: UpdateDepositRequest) {
+    return this.withSessionRecovery(() =>
+      this.client.updateDeposit({ depositId, xCSRFToken: this.csrfToken(), body: payload }),
+    );
+  }
+  archiveDeposit(depositId: string, version: number) {
+    return this.withSessionRecovery(() =>
+      this.client.archiveDeposit({
+        depositId,
+        xCSRFToken: this.csrfToken(),
+        body: { version },
+      }),
     );
   }
   getDepositValuation(depositId: string, asOf: string) {
@@ -418,6 +465,24 @@ export class BrowserFinanceApi implements FinanceApi {
   createFinancialGoal(payload: GoalInput) {
     return this.mutate((token, key) =>
       this.client.createFinancialGoal({ idempotencyKey: key, xCSRFToken: token, body: payload }),
+    );
+  }
+  updateFinancialGoal(goalId: string, payload: UpdateGoalRequest) {
+    return this.withSessionRecovery(() =>
+      this.client.updateFinancialGoal({
+        goalId,
+        xCSRFToken: this.csrfToken(),
+        body: payload,
+      }),
+    );
+  }
+  archiveFinancialGoal(goalId: string, version: number) {
+    return this.withSessionRecovery(() =>
+      this.client.archiveFinancialGoal({
+        goalId,
+        xCSRFToken: this.csrfToken(),
+        body: { version },
+      }),
     );
   }
   getAdviceProviderStatus() {
@@ -496,7 +561,8 @@ export class BrowserFinanceApi implements FinanceApi {
   private mutate<T>(
     action: (csrfToken: string | null, idempotencyKey: string) => Promise<T>,
   ): Promise<T> {
-    return this.withSessionRecovery(() => action(this.csrfToken(), createIdempotencyKey()));
+    const key = createIdempotencyKey();
+    return this.withSessionRecovery(() => action(this.csrfToken(), key));
   }
 
   private csrfToken(): string | null {
@@ -530,6 +596,27 @@ export function apiErrorMessage(error: unknown): string {
         return "Слишком много попыток. Подождите немного и попробуйте снова.";
       case "csrf_validation_failed":
         return "Защитный токен устарел. Обновите страницу и повторите действие.";
+      case "validation_error":
+        return "Проверьте заполнение полей: суммы, даты и выбранные значения.";
+      case "resource_conflict":
+        return "Данные уже изменились или действие конфликтует с текущим состоянием. Обновите страницу и повторите.";
+      case "domain_validation_error": {
+        const messages: Record<string, string> = {
+          "deposit withdrawal exceeds the projected balance":
+            "На вкладе недостаточно средств для этой операции.",
+          "deposit withdrawal exceeds its balance":
+            "На вкладе недостаточно средств для этой операции.",
+          "deposit operation cannot precede its opening date":
+            "Дата операции не может быть раньше открытия вклада.",
+          "deposit rate periods must cover the term without gaps":
+            "Периоды ставок должны идти подряд, без пропусков и пересечений.",
+          "deposit rate periods must end at maturity":
+            "Последний период ставки должен заканчиваться в дату окончания вклада.",
+          "transaction amount must be positive": "Введите сумму больше нуля.",
+          "transfer accounts must differ": "Для перевода выберите разные активы.",
+        };
+        return messages[error.payload.detail] ?? error.payload.detail;
+      }
       default:
         return error.payload.detail || "Не удалось выполнить запрос.";
     }

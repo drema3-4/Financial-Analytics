@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { isZeroDecimal, localDateAtNoonUtc, parseLocalizedDecimal } from "./money";
+import {
+  isZeroDecimal,
+  localDateAtNoonUtc,
+  operationInstant,
+  parseLocalizedDecimal,
+  todayIsoDate,
+} from "./money";
 
 describe("decimal string controls", () => {
   it("normalizes locale punctuation without using binary floating point", () => {
@@ -27,5 +33,19 @@ describe("decimal string controls", () => {
   it("converts local noon in an explicit timezone to a UTC instant", () => {
     expect(localDateAtNoonUtc("2026-10-14", "Europe/Saratov")).toBe("2026-10-14T08:00:00.000Z");
     expect(() => localDateAtNoonUtc("14.10.2026", "Europe/Saratov")).toThrow("YYYY-MM-DD");
+  });
+  it("uses the profile timezone for dates near midnight", () => {
+    const instant = new Date("2026-10-17T21:30:00Z");
+    expect(todayIsoDate(instant, "Europe/Saratov")).toBe("2026-10-18");
+    expect(todayIsoDate(instant, "America/New_York")).toBe("2026-10-17");
+  });
+  it("records today's operation now instead of creating a future noon posting", () => {
+    const morning = new Date("2026-10-19T01:30:00Z");
+    expect(operationInstant("2026-10-19", "Europe/Saratov", morning)).toBe(
+      "2026-10-19T01:30:00.000Z",
+    );
+    expect(operationInstant("2026-10-18", "Europe/Saratov", morning)).toBe(
+      "2026-10-18T08:00:00.000Z",
+    );
   });
 });

@@ -122,6 +122,10 @@ class UpdateGoalRequest(GoalInput):
     version: int = Field(ge=1)
 
 
+class ArchiveGoalRequest(ApiModel):
+    version: int = Field(ge=1)
+
+
 class GoalResponse(ApiModel):
     id: UUID
     name: str
@@ -131,6 +135,7 @@ class GoalResponse(ApiModel):
     priority: int
     linked_account_id: UUID | None
     version: int
+    archived: bool
 
 
 class AccountForecastResponse(ApiModel):
@@ -418,6 +423,29 @@ def update_goal(
     )
 
 
+@router.delete(
+    "/goals/{goal_id}",
+    operation_id="archiveFinancialGoal",
+    response_model=GoalResponse,
+    responses=_problem_responses(401, 403, 404, 409),
+)
+def archive_goal(
+    goal_id: UUID,
+    payload: ArchiveGoalRequest,
+    request: Request,
+    authenticated: MutatingSession,
+) -> GoalResponse:
+    return _goal_response(
+        _service(request).archive_goal(
+            owner_id=authenticated.profile.id,
+            actor_id=authenticated.profile.id,
+            goal_id=goal_id,
+            expected_version=payload.version,
+            request_id=_request_id(request),
+        )
+    )
+
+
 @router.get(
     "/forecasts",
     operation_id="getForecast",
@@ -538,6 +566,7 @@ def _goal_response(item: FinancialGoal) -> GoalResponse:
         priority=item.priority,
         linked_account_id=item.linked_account_id,
         version=item.version,
+        archived=item.archived,
     )
 
 

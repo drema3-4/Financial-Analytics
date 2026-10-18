@@ -15,10 +15,6 @@ interface AccountResponse {
   balance: MoneyResponse;
 }
 
-interface CategoryResponse {
-  id: string;
-}
-
 interface PostingResponse {
   account_id: string;
   money: MoneyResponse;
@@ -113,15 +109,10 @@ test.describe("SPEC.md system scenarios", () => {
     const setup = await bootstrapOwner(page, [
       { name: "Основная карта", kind: "bank", opening: "1000.00" },
     ]);
-    const category = await mutateJson<CategoryResponse>(page, "/api/v1/categories", {
-      name: "Продукты",
-      kind: "expense",
-      is_mandatory: true,
-    });
 
     await page.goto("/app/transactions");
     await page.getByRole("button", { name: "Новая операция" }).click();
-    await page.getByLabel("Категория").selectOption(category.id);
+    await page.getByLabel("Категория").fill("Продукты");
     await page.getByLabel("Сумма").fill("125,25");
     await page.getByLabel("Дата").fill("2026-10-16");
     await page.getByLabel("Комментарий").fill("продукты");
@@ -170,14 +161,10 @@ test.describe("SPEC.md system scenarios", () => {
     page,
   }) => {
     await bootstrapOwner(page, [{ name: "Карта", kind: "bank", opening: "1000.00" }]);
-    const category = await mutateJson<CategoryResponse>(page, "/api/v1/categories", {
-      name: "Подписки",
-      kind: "expense",
-    });
     await page.goto("/app/recurring");
     await page.getByRole("button", { name: "Новое правило" }).click();
     await page.getByLabel("Периодичность").selectOption("monthly");
-    await page.getByLabel("Категория").selectOption(category.id);
+    await page.getByLabel("Категория").fill("Подписки");
     await page.getByLabel("Сумма").fill("99,00");
     await page.getByLabel("Описание").fill("Месячная подписка");
     await page.getByLabel("Начало").fill("2026-10-16");
@@ -200,26 +187,48 @@ test.describe("SPEC.md system scenarios", () => {
   test("4. capitalized deposit with top-up exposes schedule and yield", async ({ page }) => {
     const setup = await bootstrapOwner(page, [
       { name: "Текущий счёт", kind: "bank", opening: "500.00" },
-      { name: "Вклад", kind: "deposit", opening: "1000.00" },
     ]);
     await page.goto("/app/deposits");
     await page.getByRole("button", { name: "Добавить вклад" }).click();
-    await page
-      .getByLabel("Счёт вклада")
-      .selectOption(required(setup.accounts[1], "deposit account").id);
-    await page.getByLabel("Открытие").fill("2026-10-01");
-    await page.getByLabel("Окончание").fill("2027-10-01");
+    await page.getByLabel("Название вклада").fill("Резерв с капитализацией");
+    await page.getByLabel("Начальная сумма").fill("1000,00");
+    await page.getByLabel("Открытие").fill("2026-09-01");
+    await page.getByLabel("Окончание").fill("2027-09-01");
     await page.getByLabel("Номинальная ставка, %").fill("10");
     await page.getByLabel("Капитализация").selectOption("monthly_calendar_end");
-    await page.getByRole("button", { name: "Создать и построить график" }).click();
+    await page.getByRole("button", { name: "Создать вклад", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Оценка вклада" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Список вкладов" })).toContainText("10%");
+    const deposits = await getJson<{ id: string; principal_account_id: string }[]>(
+      page,
+      "/api/v1/deposits",
+    );
+    const deposit = required(deposits[0], "new deposit");
+    const valuation = await getJson<{
+      ledger_balance: MoneyResponse;
+      earned_interest: MoneyResponse;
+    }>(page, `/api/v1/deposits/${deposit.id}/valuation?as_of=2026-10-17`);
+    expect(valuation.ledger_balance.amount).toBe("1008.22");
+    expect(valuation.earned_interest.amount).toBe("12.64");
+    await page.goto("/app/transactions");
+    await page.getByRole("button", { name: "Новая операция" }).click();
+    await page.getByLabel("Тип операции").selectOption("transfer");
     await page
-      .getByLabel("Счёт-контрагент")
+      .getByLabel("Со счёта")
       .selectOption(required(setup.accounts[0], "counterparty account").id);
+    await page.getByLabel("На счёт").selectOption(deposit.principal_account_id);
     await page.getByLabel("Сумма").fill("100,00");
     await page.getByLabel("Дата").fill("2026-10-16");
-    await page.getByLabel("Описание").fill("Пополнение вклада");
-    await page.getByRole("button", { name: "Записать факт" }).click();
+    await page.getByLabel("Комментарий").fill("Пополнение вклада");
+    await page.getByRole("button", { name: "Провести" }).click();
+    await expect(page.getByRole("dialog")).not.toBeVisible();
+    const bank = await getJson<AccountResponse>(
+      page,
+      `/api/v1/accounts/${required(setup.accounts[0], "bank").id}`,
+    );
+    expect(bank.balance.amount).toBe("400.00");
+    await page.goto("/app/deposits");
+    await page.getByRole("button", { name: /Резерв с капитализацией/ }).click();
     await expect(page.getByText("Эффективная доходность", { exact: true })).toBeVisible();
     await expect(page.getByRole("table", { name: "График начислений" })).toBeVisible();
   });
@@ -241,7 +250,7 @@ test.describe("SPEC.md system scenarios", () => {
   });
 
   test("6. goal shows required contribution and numeric feasibility actions", async ({ page }) => {
-    await bootstrapOwner(page, [{ name: "Накопления", kind: "savings", opening: "10000.00" }]);
+    await bootstrapOwner(page, [{ name: "Накопления", kind: "bank", opening: "10000.00" }]);
     await page.goto("/app/goals");
     await page.getByRole("button", { name: "Новая цель" }).click();
     await page.getByLabel("Название цели").fill("Резерв");
@@ -266,6 +275,81 @@ test.describe("SPEC.md system scenarios", () => {
     await expect(page.getByText("Советник ничего не изменил.")).toBeVisible();
     const after = await getJson<TransactionPageResponse>(page, "/api/v1/transactions?limit=100");
     expect(after.items.map((item) => item.id)).toEqual(before.items.map((item) => item.id));
+  });
+
+  test("8. user can edit and delete operations, accounts, deposits and goals through the real UI", async ({
+    page,
+  }) => {
+    test.setTimeout(60000);
+    await bootstrapOwner(page, [
+      { name: "Карта для исправлений", kind: "bank", opening: "1000.00" },
+    ]);
+    await page.goto("/app/transactions");
+    await page.getByRole("button", { name: "Новая операция" }).click();
+    await page.getByLabel("Категория").fill("Новая категория в форме");
+    await page.getByLabel("Сумма").fill("100,00");
+    await page.getByLabel("Комментарий").fill("Покупка для исправления");
+    await page.getByRole("button", { name: "Провести", exact: true }).click();
+    let row = page.getByRole("row").filter({ hasText: "Покупка для исправления" });
+    await row.getByRole("button", { name: "Изменить", exact: true }).click();
+    await page.getByLabel("Сумма").fill("125,25");
+    await page.getByLabel("Комментарий").fill("Исправленная покупка");
+    await page.getByRole("button", { name: "Сохранить исправление" }).click();
+    row = page.getByRole("row").filter({ hasText: "Исправленная покупка" });
+    await expect(row).toContainText("125,25");
+    await row.getByRole("button", { name: "Удалить", exact: true }).click();
+    await page.getByRole("button", { name: "Удалить операцию (сторнировать)" }).click();
+    await expect(row).toContainText("Отменена");
+
+    await page.goto("/app/analytics");
+    await expect(page.getByRole("heading", { name: "Итоги · RUB" })).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+
+    await page.goto("/app/goals");
+    await page.getByRole("button", { name: "Новая цель" }).click();
+    await page.getByLabel("Название цели").fill("На отпуск");
+    await page.getByLabel("Целевая сумма").fill("10000,00");
+    await page.getByRole("button", { name: "Создать цель", exact: true }).click();
+    const goalsTable = page.getByRole("table", { name: "Финансовые цели", exact: true });
+    await goalsTable.getByRole("button", { name: "Изменить" }).click();
+    await page.getByLabel("Название цели").fill("На ремонт");
+    await page.getByLabel("Целевая сумма").fill("12000,00");
+    await page.getByRole("button", { name: "Сохранить изменения" }).click();
+    await expect(goalsTable).toContainText("На ремонт");
+    await goalsTable.getByRole("button", { name: "Удалить", exact: true }).click();
+    await page.getByRole("button", { name: "Удалить цель", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Целей пока нет" })).toBeVisible();
+
+    await page.goto("/app/deposits");
+    await page.getByRole("button", { name: "Добавить вклад" }).click();
+    await page.getByLabel("Название вклада").fill("Вклад для исправлений");
+    await page.getByLabel("Начальная сумма").fill("1000,00");
+    await page.getByRole("button", { name: "Создать вклад", exact: true }).click();
+    await page.getByRole("button", { name: "Изменить вклад", exact: true }).click();
+    await page.getByLabel("Название вклада").fill("Исправленный вклад");
+    await expect(page.getByLabel("Номинальная ставка, %", { exact: true })).toHaveValue("10");
+    await page.getByLabel("Номинальная ставка, %", { exact: true }).fill("12,5");
+    await page.getByRole("button", { name: "Сохранить изменения" }).click();
+    await expect(page.getByRole("navigation", { name: "Список вкладов" })).toContainText("12,5%");
+    await page.getByRole("button", { name: "Удалить вклад", exact: true }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Удалить вклад", exact: true })
+      .click();
+    await expect(page.getByRole("heading", { name: "Вкладов пока нет" })).toBeVisible();
+
+    await page.goto("/app/accounts");
+    const accountsTable = page.getByRole("table", { name: "Счета", exact: true });
+    await accountsTable.getByRole("button", { name: "Изменить" }).click();
+    const accountDialog = page.getByRole("dialog", { name: "Изменить счёт" });
+    await accountDialog.getByLabel("Название счёта").fill("Исправленная карта");
+    await accountDialog.getByLabel("Текущий остаток").fill("1500,50");
+    await page.getByRole("button", { name: "Сохранить изменения" }).click();
+    await expect(accountsTable).toContainText("Исправленная карта");
+    await expect(accountsTable).toContainText("1 500,50".replace(" ", "\u00a0"));
+    await accountsTable.getByRole("button", { name: "Удалить", exact: true }).click();
+    await page.getByRole("button", { name: "Удалить счёт", exact: true }).click();
+    await expect(accountsTable.getByRole("row")).toHaveCount(1);
   });
 });
 

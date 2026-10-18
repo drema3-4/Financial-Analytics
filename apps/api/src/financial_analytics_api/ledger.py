@@ -83,7 +83,7 @@ class CreateAccountRequest(ApiModel):
     )
 
     name: str = Field(min_length=1, max_length=160)
-    kind: Literal["cash", "bank", "savings", "deposit", "other_asset"]
+    kind: Literal["cash", "bank", "other_asset"]
     currency: str = Field(pattern=r"^[A-Z]{3}$")
     opening_balance: MoneyInput | None = None
     opening_balance_occurred_at: datetime | None = None
@@ -103,11 +103,20 @@ class UpdateAccountRequest(ApiModel):
     version: int = Field(ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=160)
     archived: bool | None = None
+    kind: Literal["cash", "bank", "other_asset"] | None = None
+    balance: MoneyInput | None = None
+    balance_occurred_at: datetime | None = None
 
     @model_validator(mode="after")
     def require_change(self) -> UpdateAccountRequest:
-        if self.name is None and self.archived is None:
+        if (
+            self.name is None
+            and self.archived is None
+            and self.kind is None
+            and self.balance is None
+        ):
             raise ValueError("at least one mutable field is required")
+        _require_aware(self.balance_occurred_at, "balance_occurred_at")
         return self
 
 
@@ -300,6 +309,34 @@ class ReversalRequest(ApiModel):
         return value
 
 
+class CorrectionRequest(ApiModel):
+    kind: Literal["income", "expense", "transfer", "adjustment"]
+    account_id: UUID
+    destination_account_id: UUID | None = None
+    category_id: UUID | None = None
+    money: MoneyInput
+    occurred_at: datetime
+    description: str = Field(default="", max_length=2000)
+    reason: str = Field(min_length=1, max_length=2000)
+    tag_ids: list[UUID] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> CorrectionRequest:
+        _require_aware(self.occurred_at, "occurred_at")
+        amount = Decimal(self.money.amount)
+        if amount == 0:
+            raise ValueError("correction amount must be non-zero")
+        if self.kind in {"income", "expense"}:
+            if self.category_id is None or self.destination_account_id is not None or amount < 0:
+                raise ValueError("income and expense require positive money and one category")
+        elif self.kind == "transfer":
+            if self.destination_account_id is None or self.category_id is not None or amount < 0:
+                raise ValueError("transfer requires positive money and one destination")
+        elif self.destination_account_id is not None or self.category_id is not None:
+            raise ValueError("adjustment forbids destination and category")
+        return self
+
+
 class PostingResponse(ApiModel):
     id: UUID
     account_id: UUID
@@ -315,6 +352,7 @@ class TransactionResponse(ApiModel):
     source: str
     category_id: UUID | None
     reversal_of_id: UUID | None
+    reversed_by_id: UUID | None
     deposit_id: UUID | None
     tag_ids: list[UUID]
     postings: list[PostingResponse]
@@ -441,6 +479,7 @@ def list_accounts(
         for item in _service(request).list_accounts(
             authenticated.profile.id, include_archived=include_archived
         )
+        if item.account.kind is not AccountKind.DEPOSIT
     ]
 
 
@@ -478,6 +517,11 @@ def update_account(
         version=payload.version,
         name=payload.name,
         archived=payload.archived,
+        kind=None if payload.kind is None else AccountKind(payload.kind),
+        balance=None if payload.balance is None else payload.balance.to_domain(),
+        balance_occurred_at=None
+        if payload.balance_occurred_at is None
+        else Instant(payload.balance_occurred_at),
         request_id=_request_id(request),
     )
     item = _service(request).get_account(authenticated.profile.id, account_id)
@@ -888,6 +932,41 @@ def reverse_transaction(
     return _transaction_response(transaction)
 
 
+@router.post(
+    "/transactions/{transaction_id}/correction",
+    tags=["ledger"],
+    operation_id="correctTransaction",
+    response_model=TransactionResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses=_problem_responses(401, 403, 404, 409, 422),
+)
+def correct_transaction(
+    transaction_id: UUID,
+    payload: CorrectionRequest,
+    request: Request,
+    authenticated: MutatingSession,
+    idempotency_key: IdempotencyKey,
+) -> TransactionResponse:
+    transaction = _service(request).correct_transaction(
+        owner_id=authenticated.profile.id,
+        actor_id=authenticated.profile.id,
+        transaction_id=transaction_id,
+        replacement_kind=TransactionKind(payload.kind),
+        account_id=payload.account_id,
+        destination_account_id=payload.destination_account_id,
+        category_id=payload.category_id,
+        amount=payload.money.to_domain(),
+        occurred_at=Instant(payload.occurred_at),
+        description=payload.description,
+        reason=payload.reason,
+        tag_ids=payload.tag_ids,
+        idempotency_key=idempotency_key,
+        request_hash=_request_hash(payload, context=str(transaction_id)),
+        request_id=_request_id(request),
+    )
+    return _transaction_response(transaction)
+
+
 def _account_response(account: Account, balance: Money) -> AccountResponse:
     return AccountResponse(
         id=account.id,
@@ -952,6 +1031,7 @@ def _transaction_response(transaction: Transaction) -> TransactionResponse:
         source=transaction.source,
         category_id=transaction.category_id,
         reversal_of_id=transaction.reversal_of_id,
+        reversed_by_id=transaction.reversed_by_id,
         deposit_id=transaction.deposit_id,
         tag_ids=list(transaction.tag_ids),
         postings=[_posting_response(posting) for posting in transaction.postings],

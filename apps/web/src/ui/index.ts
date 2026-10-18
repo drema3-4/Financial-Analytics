@@ -1,7 +1,13 @@
 export { Button } from "./Button";
 export { ResponsiveDataView } from "./DataView";
 export { DateControl, InputField, MoneyInput, SelectField } from "./Fields";
-export { isZeroDecimal, localDateAtNoonUtc, parseLocalizedDecimal, todayIsoDate } from "./money";
+export {
+  isZeroDecimal,
+  localDateAtNoonUtc,
+  operationInstant,
+  parseLocalizedDecimal,
+  todayIsoDate,
+} from "./money";
 export { Dialog } from "./Overlay";
 export { EmptyState, ErrorState, LoadingState } from "./States";
 export { ToastProvider } from "./Toast";

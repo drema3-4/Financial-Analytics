@@ -83,6 +83,10 @@ class DepositTerms:
     early_close_rule: EarlyCloseRule
     tax_rate: Rate
     algorithm_version: str = DEPOSIT_ALGORITHM_VERSION
+    name: str = "Вклад"
+    archived: bool = False
+    version: int = 1
+    automatic_interest: bool = True
 
     def __post_init__(self) -> None:
         if isinstance(self.opened_on, datetime) or isinstance(self.matures_on, datetime):
@@ -111,6 +115,10 @@ class DepositTerms:
             raise DomainError("deposit timezone must be a valid IANA timezone") from error
         if self.algorithm_version != DEPOSIT_ALGORITHM_VERSION:
             raise DomainError("unsupported deposit interest algorithm version")
+        if not self.name.strip() or len(self.name) > 160:
+            raise DomainError("deposit name must contain 1 to 160 characters")
+        if self.version < 1:
+            raise DomainError("deposit version must be positive")
 
 
 @dataclass(frozen=True, slots=True)

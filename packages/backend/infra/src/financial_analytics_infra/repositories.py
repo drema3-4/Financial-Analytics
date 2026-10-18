@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 from collections import defaultdict
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime
 from types import TracebackType
 from uuid import UUID, uuid4
 
-from sqlalchemy import Select, exists, func, or_, select, tuple_, update
+from sqlalchemy import Select, delete, exists, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -426,7 +427,16 @@ class PostgresLedgerRepository:
                 .order_by(TransactionTagModel.tag_id)
             )
         )
-        return _transaction_from_rows(row, postings, tag_ids)
+        reversed_by_id = self._session.scalar(
+            select(TransactionModel.id).where(
+                TransactionModel.owner_id == self._owner_id,
+                TransactionModel.reversal_of_id == transaction_id,
+                TransactionModel.status == "posted",
+            )
+        )
+        return replace(
+            _transaction_from_rows(row, postings, tag_ids), reversed_by_id=reversed_by_id
+        )
 
     def _transaction_query(self, transaction_id: UUID) -> Select[TransactionModel]:
         return select(TransactionModel).where(
@@ -521,12 +531,24 @@ class PostgresLedgerRepository:
         tags_by_transaction: defaultdict[UUID, list[UUID]] = defaultdict(list)
         for transaction_id, tag_id in tag_rows:
             tags_by_transaction[transaction_id].append(tag_id)
+        reversed_by_id = dict(
+            self._session.execute(
+                select(TransactionModel.reversal_of_id, TransactionModel.id).where(
+                    TransactionModel.owner_id == self._owner_id,
+                    TransactionModel.reversal_of_id.in_(transaction_ids),
+                    TransactionModel.status == "posted",
+                )
+            ).all()
+        )
         return (
             tuple(
-                _transaction_from_rows(
-                    row,
-                    postings_by_transaction[row.id],
-                    tags_by_transaction[row.id],
+                replace(
+                    _transaction_from_rows(
+                        row,
+                        postings_by_transaction[row.id],
+                        tags_by_transaction[row.id],
+                    ),
+                    reversed_by_id=reversed_by_id.get(row.id),
                 )
                 for row in selected
             ),
@@ -553,11 +575,26 @@ class PostgresLedgerRepository:
         return tuple(_posting_from_row(row) for row in self._session.scalars(query))
 
     def list_deposit_transactions(self, deposit_id: UUID) -> tuple[Transaction, ...]:
+        principal_account_id = self._session.scalar(
+            select(DepositTermsModel.principal_account_id).where(
+                DepositTermsModel.owner_id == self._owner_id,
+                DepositTermsModel.id == deposit_id,
+            )
+        )
+        if principal_account_id is None:
+            return ()
+        posting_transactions = select(PostingModel.transaction_id).where(
+            PostingModel.owner_id == self._owner_id,
+            PostingModel.account_id == principal_account_id,
+        )
         transaction_ids = self._session.scalars(
             select(TransactionModel.id)
             .where(
                 TransactionModel.owner_id == self._owner_id,
-                TransactionModel.deposit_id == deposit_id,
+                or_(
+                    TransactionModel.deposit_id == deposit_id,
+                    TransactionModel.id.in_(posting_transactions),
+                ),
                 TransactionModel.status == "posted",
             )
             .order_by(TransactionModel.occurred_at, TransactionModel.id)
@@ -715,6 +752,8 @@ class PostgresDepositRepository:
                 id=terms.id,
                 owner_id=terms.owner_id,
                 principal_account_id=terms.principal_account_id,
+                name=terms.name,
+                automatic_interest=terms.automatic_interest,
                 currency=terms.currency.code,
                 opened_on=terms.opened_on,
                 matures_on=terms.matures_on,
@@ -733,6 +772,8 @@ class PostgresDepositRepository:
                 ),
                 tax_rate=terms.tax_rate.value,
                 algorithm_version=terms.algorithm_version,
+                archived=terms.archived,
+                version=terms.version,
             )
         )
         self._session.flush()
@@ -751,10 +792,12 @@ class PostgresDepositRepository:
 
     def get(self, deposit_id: UUID) -> DepositTerms | None:
         row = self._session.scalar(
-            select(DepositTermsModel).where(
+            select(DepositTermsModel)
+            .where(
                 DepositTermsModel.owner_id == self._owner_id,
                 DepositTermsModel.id == deposit_id,
             )
+            .execution_options(populate_existing=True)
         )
         if row is None:
             return None
@@ -768,13 +811,80 @@ class PostgresDepositRepository:
         )
         return _deposit_from_rows(row, tuple(periods))
 
-    def list(self) -> tuple[DepositTerms, ...]:
+    def list(self, *, include_archived: bool = False) -> tuple[DepositTerms, ...]:
+        query = select(DepositTermsModel.id).where(DepositTermsModel.owner_id == self._owner_id)
+        if not include_archived:
+            query = query.where(DepositTermsModel.archived.is_(False))
         ids = self._session.scalars(
-            select(DepositTermsModel.id)
-            .where(DepositTermsModel.owner_id == self._owner_id)
-            .order_by(DepositTermsModel.opened_on, DepositTermsModel.id)
+            query.order_by(DepositTermsModel.opened_on, DepositTermsModel.id)
         )
         return tuple(terms for deposit_id in ids if (terms := self.get(deposit_id)) is not None)
+
+    def save(self, terms: DepositTerms, *, expected_version: int) -> DepositTerms:
+        if terms.owner_id != self._owner_id:
+            raise OwnershipError("deposit is outside repository scope")
+        row = self._session.scalar(
+            select(DepositTermsModel)
+            .where(
+                DepositTermsModel.owner_id == self._owner_id,
+                DepositTermsModel.id == terms.id,
+            )
+            .with_for_update()
+        )
+        if row is None or row.version != expected_version:
+            raise ConcurrentModificationError("deposit version is stale")
+        row.name = terms.name
+        row.automatic_interest = terms.automatic_interest
+        row.updated_at = func.now()
+        row.opened_on = terms.opened_on
+        row.matures_on = terms.matures_on
+        row.capitalization_frequency = terms.capitalization_frequency.value
+        row.day_count_convention = terms.day_count_convention.value
+        row.rounding_policy = terms.rounding_policy.value
+        row.interest_rounding_frequency = terms.interest_rounding_frequency.value
+        row.timezone = terms.timezone
+        row.cashflow_cutoff_time = terms.cashflow_cutoff_time
+        row.cashflow_cutoff_inclusive = terms.cashflow_cutoff_inclusive
+        row.early_close_policy = terms.early_close_rule.policy.value
+        row.early_close_rate = (
+            None
+            if terms.early_close_rule.nominal_rate is None
+            else terms.early_close_rule.nominal_rate.value
+        )
+        row.tax_rate = terms.tax_rate.value
+        row.archived = terms.archived
+        self._session.execute(
+            delete(DepositRatePeriodModel).where(
+                DepositRatePeriodModel.owner_id == self._owner_id,
+                DepositRatePeriodModel.deposit_id == terms.id,
+            )
+        )
+        self._session.add_all(
+            [
+                DepositRatePeriodModel(
+                    owner_id=terms.owner_id,
+                    deposit_id=terms.id,
+                    starts_on=period.starts_on,
+                    ends_on=period.ends_on,
+                    nominal_rate=period.nominal_rate.value,
+                )
+                for period in terms.rate_periods
+            ]
+        )
+        self._session.flush()
+        saved = self.get(terms.id)
+        if saved is None:
+            raise RuntimeError("saved deposit disappeared")
+        return saved
+
+    def find_by_principal_account(self, account_id: UUID) -> DepositTerms | None:
+        deposit_id = self._session.scalar(
+            select(DepositTermsModel.id).where(
+                DepositTermsModel.owner_id == self._owner_id,
+                DepositTermsModel.principal_account_id == account_id,
+            )
+        )
+        return None if deposit_id is None else self.get(deposit_id)
 
 
 class PostgresForecastRepository:
@@ -857,6 +967,7 @@ class PostgresForecastRepository:
                 saved_amount=goal.saved_amount.amount,
                 priority=goal.priority,
                 linked_account_id=goal.linked_account_id,
+                archived=goal.archived,
                 version=goal.version,
             )
         )
@@ -873,7 +984,10 @@ class PostgresForecastRepository:
     def list_goals(self) -> tuple[FinancialGoal, ...]:
         rows = self._session.scalars(
             select(FinancialGoalModel)
-            .where(FinancialGoalModel.owner_id == self._owner_id)
+            .where(
+                FinancialGoalModel.owner_id == self._owner_id,
+                FinancialGoalModel.archived.is_(False),
+            )
             .order_by(
                 FinancialGoalModel.priority,
                 FinancialGoalModel.target_date,
@@ -901,6 +1015,7 @@ class PostgresForecastRepository:
         row.saved_amount = goal.saved_amount.amount
         row.priority = goal.priority
         row.linked_account_id = goal.linked_account_id
+        row.archived = goal.archived
         self._session.flush()
         return _goal_from_row(row)
 
@@ -1068,6 +1183,10 @@ def _deposit_from_rows(
         ),
         tax_rate=Rate.of(row.tax_rate),
         algorithm_version=row.algorithm_version,
+        name=row.name,
+        archived=row.archived,
+        version=row.version,
+        automatic_interest=row.automatic_interest,
     )
 
 
@@ -1123,6 +1242,7 @@ def _goal_from_row(row: FinancialGoalModel) -> FinancialGoal:
         priority=row.priority,
         linked_account_id=row.linked_account_id,
         version=row.version,
+        archived=row.archived,
     )
 
 

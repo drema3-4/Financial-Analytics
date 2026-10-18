@@ -1,4 +1,8 @@
-import { ApiError, FinancialAnalyticsClient } from "@financial-analytics/api-contracts";
+import {
+  ApiError,
+  FinancialAnalyticsClient,
+  type UpdateDepositRequest,
+} from "@financial-analytics/api-contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { apiErrorMessage, BrowserFinanceApi, readCookie, SessionExpiredError } from "./api";
@@ -255,7 +259,8 @@ describe("BrowserFinanceApi", () => {
       ),
       api.listDeposits(),
       api.createDeposit({
-        principal_account_id: account.id,
+        name: "Резерв",
+        opening_balance: { amount: "1000.00", currency: "RUB" },
         currency: "RUB",
         opened_on: "2026-10-16",
         matures_on: "2027-10-16",
@@ -373,8 +378,101 @@ describe("API helpers", () => {
     expect(apiErrorMessage(problem("bootstrap_closed"))).toContain("уже настроено");
     expect(apiErrorMessage(problem("rate_limit_exceeded"))).toContain("Слишком много");
     expect(apiErrorMessage(problem("csrf_validation_failed"))).toContain("токен устарел");
+    expect(apiErrorMessage(problem("validation_error"))).toContain("Проверьте заполнение");
+    expect(apiErrorMessage(problem("resource_conflict"))).toContain("уже изменились");
+    expect(
+      apiErrorMessage(problem("domain_validation_error", "deposit withdrawal exceeds its balance")),
+    ).toContain("недостаточно средств");
+    expect(apiErrorMessage(problem("domain_validation_error", "domain message"))).toBe(
+      "domain message",
+    );
     expect(apiErrorMessage(problem("other", "Понятная ошибка"))).toBe("Понятная ошибка");
     expect(apiErrorMessage(problem("other", ""))).toBe("Не удалось выполнить запрос.");
     expect(apiErrorMessage(new ApiError(500, null))).toContain("Не удалось связаться");
+  });
+});
+
+it("preserves one correction idempotency key across session recovery", async () => {
+  const client = new FinancialAnalyticsClient("http://api.test");
+  const correct = vi
+    .spyOn(client, "correctTransaction")
+    .mockRejectedValueOnce(new ApiError(401, {}))
+    .mockResolvedValue({ id: "corrected" } as never);
+  vi.spyOn(client, "refresh_api_v1_auth_refresh_post").mockResolvedValue(profile);
+  const api = new BrowserFinanceApi(client, () => "fa_csrf=csrf");
+  await api.correctTransaction("original", {
+    kind: "expense",
+    account_id: account.id,
+    category_id: "category",
+    money: { amount: "125.25", currency: "RUB" },
+    occurred_at: "2026-10-16T08:00:00Z",
+    reason: "Correct receipt",
+  });
+  expect(correct).toHaveBeenCalledTimes(2);
+  expect(correct.mock.calls[0]?.[0]).toEqual(correct.mock.calls[1]?.[0]);
+  expect(correct.mock.calls[0]?.[0].body.money.amount).toBe("125.25");
+});
+
+it("sends optimistic versions and CSRF for edits and recoverable deletions", async () => {
+  const client = new FinancialAnalyticsClient("http://api.test");
+  const updateAccount = vi.spyOn(client, "updateAccount").mockResolvedValue(account);
+  const updateDeposit = vi.spyOn(client, "updateDeposit").mockResolvedValue({} as never);
+  const archiveDeposit = vi.spyOn(client, "archiveDeposit").mockResolvedValue({} as never);
+  const updateGoal = vi.spyOn(client, "updateFinancialGoal").mockResolvedValue({} as never);
+  const archiveGoal = vi.spyOn(client, "archiveFinancialGoal").mockResolvedValue({} as never);
+  const api = new BrowserFinanceApi(client, () => "fa_csrf=csrf");
+  const terms: UpdateDepositRequest = {
+    name: "Reserve",
+    currency: "RUB",
+    opened_on: "2026-10-01",
+    matures_on: "2027-10-01",
+    rate_periods: [
+      { starts_on: "2026-10-01", ends_on: "2027-10-01", nominal_rate: { value: "0.1" } },
+    ],
+    capitalization_frequency: "monthly_calendar_end",
+    day_count_convention: "actual_365_fixed",
+    rounding_policy: "half_even",
+    interest_rounding_frequency: "capitalization",
+    timezone: "UTC",
+    cashflow_cutoff_time: "23:59:59",
+    cashflow_cutoff_inclusive: true,
+    early_close_rule: { policy: "forfeit_interest", nominal_rate: null },
+    tax_rate: { value: "0" },
+    version: 2,
+  };
+  await api.updateAccount(account.id, {
+    version: 1,
+    name: "Updated",
+    balance: { amount: "1000.50", currency: "RUB" },
+  });
+  await api.updateDeposit("deposit", terms);
+  await api.archiveDeposit("deposit", 3);
+  await api.updateFinancialGoal("goal", {
+    name: "Reserve",
+    target: { amount: "1000", currency: "RUB" },
+    saved_amount: { amount: "100", currency: "RUB" },
+    target_date: "2027-10-01",
+    priority: 1,
+    version: 1,
+  });
+  await api.archiveFinancialGoal("goal", 2);
+  expect(updateAccount.mock.calls[0]?.[0]).toMatchObject({
+    xCSRFToken: "csrf",
+    body: { version: 1, balance: { amount: "1000.50" } },
+  });
+  expect(updateDeposit.mock.calls[0]?.[0]).toMatchObject({
+    xCSRFToken: "csrf",
+    body: { version: 2, rate_periods: [{ nominal_rate: { value: "0.1" } }] },
+  });
+  expect(archiveDeposit.mock.calls[0]?.[0]).toEqual({
+    depositId: "deposit",
+    xCSRFToken: "csrf",
+    body: { version: 3 },
+  });
+  expect(updateGoal.mock.calls[0]?.[0]).toMatchObject({ xCSRFToken: "csrf", body: { version: 1 } });
+  expect(archiveGoal.mock.calls[0]?.[0]).toEqual({
+    goalId: "goal",
+    xCSRFToken: "csrf",
+    body: { version: 2 },
   });
 });

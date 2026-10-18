@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, func, select, update
+from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,7 @@ from financial_analytics_api.main import create_app
 from financial_analytics_app.deposits import DepositService
 from financial_analytics_app.identity import AuthService
 from financial_analytics_app.ledger import LedgerService
+from financial_analytics_domain import Instant
 from financial_analytics_infra.models import AuditEventModel, DepositTermsModel, TransactionModel
 from financial_analytics_infra.repositories import PostgresUnitOfWorkFactory
 from financial_analytics_infra.settings import AppEnvironment, Settings
@@ -42,8 +43,8 @@ def _make_app(engine: Engine, owners: dict[str, UUID]) -> object:
         settings=Settings(app_env=AppEnvironment.TEST, _env_file=None),
         readiness_check=ready,
         auth_service=cast(AuthService, auth),
-        ledger_service=LedgerService(factory),
-        deposit_service=DepositService(factory),
+        ledger_service=LedgerService(factory, clock=lambda: Instant(NOW)),
+        deposit_service=DepositService(factory, clock=lambda: Instant(NOW)),
     )
 
 
@@ -69,10 +70,10 @@ def test_deposit_cashflows_interest_reconciliation_audit_and_owner_isolation(
         _client(app, "owner", owner_id) as client,
         _client(app, "other", other_owner_id) as other,
     ):
-        principal = _account(client, owner_id, name="Deposit", kind="deposit", key="principal")
         bank = _account(client, owner_id, name="Bank", kind="bank", key="bank")
         payload = {
-            "principal_account_id": principal["id"],
+            "name": "Deposit",
+            "opening_balance": {"amount": "900.00", "currency": "USD"},
             "currency": "USD",
             "opened_on": "2024-01-01",
             "matures_on": "2024-01-04",
@@ -111,7 +112,7 @@ def test_deposit_cashflows_interest_reconciliation_audit_and_owner_isolation(
             f"/api/v1/deposits/{deposit_id}/cashflows",
             json={
                 "counterparty_account_id": bank["id"],
-                "money": {"amount": "1000.00", "currency": "USD"},
+                "money": {"amount": "100.00", "currency": "USD"},
                 "occurred_at": NOW.isoformat(),
                 "description": "Opening funding",
             },
@@ -222,9 +223,5 @@ def test_deposit_cashflows_interest_reconciliation_audit_and_owner_isolation(
             == 2
         )
     with Session(postgres_engine) as session, pytest.raises(DBAPIError):
-        session.execute(
-            update(DepositTermsModel)
-            .where(DepositTermsModel.id == UUID(deposit_id))
-            .values(tax_rate="0.10")
-        )
+        session.execute(delete(DepositTermsModel).where(DepositTermsModel.id == UUID(deposit_id)))
         session.commit()

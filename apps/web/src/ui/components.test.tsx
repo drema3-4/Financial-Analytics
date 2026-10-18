@@ -52,4 +52,19 @@ describe("foundation components", () => {
     await user.click(screen.getByRole("button", { name: "Закрыть", hidden: true }));
     expect(close).toHaveBeenCalledOnce();
   });
+  it("keeps modal names and descriptions unique when multiple editors are mounted", () => {
+    render(
+      <>
+        <Dialog onClose={vi.fn()} open={false} title="Новый счёт" description="Создание">
+          Создание счёта
+        </Dialog>
+        <Dialog onClose={vi.fn()} open title="Изменить счёт" description="Редактирование">
+          Редактор счёта
+        </Dialog>
+      </>,
+    );
+    const edit = screen.getByRole("dialog", { name: "Изменить счёт" });
+    expect(edit).toHaveAccessibleDescription("Редактирование");
+    expect(edit.getAttribute("aria-labelledby")).not.toBe(screen.getByText("Новый счёт").id);
+  });
 });

@@ -281,6 +281,7 @@ class FinancialGoal:
     priority: int
     linked_account_id: UUID | None = None
     version: int = 1
+    archived: bool = False
 
     def __post_init__(self) -> None:
         if not self.name.strip() or len(self.name) > 160:

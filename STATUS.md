@@ -1,13 +1,12 @@
 # Статус проекта
 
-Обновлено: 2026-10-17
+Обновлено: 2026-10-19
 
 ## Текущее состояние
 
-- Стадия: завершён `13 — Invite-only сервер и релиз`; локальный release и безопасный путь
-  server rollout подготовлены, фактические проверки и ограничения зафиксированы.
-- Реализация: SMTP outbox, master/admin allowlist UI/API, одноразовые invitation/verification/reset
-  ссылки, production validation, три Compose profiles и production overlay.
+- Стадия: завершён корректирующий `14 — Core finance workflows` по пользовательским замечаниям.
+- Реализация: отдельные счета/вклады, единый журнал, inline-категории, полные исправления операций,
+  CRUD счетов/вкладов/целей, автоматическая капитализация, рабочие диапазоны аналитики.
 - Версия: предложение `0.2.0`, tag proposal `v0.2.0`; tag/push/external deploy не выполнялись.
 - Следующий внешний gate: выбрать домен/хост, TLS/SMTP/secrets и оператора backup/rollback,
   выполнить независимую ручную приёмку и подтвердить публикацию.
@@ -16,6 +15,79 @@
 - LLM не входит в core startup. Compose profile `local-llm` и `Qwen/Qwen3-4B-AWQ` **tested**
   на RTX 3050 6 ГБ: context 2048, одна sequence, GPU reserve `0.80`, non-thinking smoke,
   VRAM/latency и полный strict-schema adapter round-trip подтверждены; детали в `docs/LLM.md`.
+
+## Готово в этапе 14
+
+- Вклад создаётся отдельно с собственной начальной суммой и условиями; скрытый double-entry
+  account создаётся атомарно. Обычные счета не приносят процентов. Пустой вклад можно пополнить
+  переводом со счёта без удвоения капитала. Все основные операции доступны и для вкладов.
+- UI принимает/показывает годовые проценты без ошибки масштаба. Principal cashflows учитывают
+  opening adjustment и операции общего журнала. Worker и финансовые mutations сверяют due
+  interest с ledger, проводят только разность и сохраняют audit; повторы/конкуренция без дублей.
+- Полное исправление операции атомарно добавляет reversal + replacement. Удаление операции
+  создаёт reversal; счета/вклады/цели архивируются. Условия и цели versioned, изменения traceable.
+- Категорию можно ввести в форме операции/правила или выбрать существующую. Нет обязательного
+  предварительного шага. Убраны дублирующие пустые формы фактов на странице вкладов.
+- Analytics starts with aligned month boundaries; balance/report/forecast/goal caches обновляются
+  после mutations. Даты учитывают profile timezone, утренние операции не создаются в будущем.
+  Диалоги имеют уникальные aria IDs, мобильный профиль содержит ссылки на все разделы.
+- ADR-024, SPEC/PLAN, OpenAPI/client, модель данных, расчёты, runbook и regression matrix обновлены.
+  Детали плана, ручных действий и ограничений: `docs/CORE_FINANCE_ACCEPTANCE.md`.
+
+## Проверки этапа 14
+
+- Backend: **136 passed**, branch-inclusive coverage **86.80%**, `64.55 s`, с настоящим
+  PostgreSQL 18.6. Включены Decimal golden/property, due/replay/concurrency, atomic rollback,
+  CRUD/versions/audit/tenant isolation и upgrade legacy contracts без изменения проводок.
+- Poetry lock, Ruff lint/format, strict mypy (`86 source files`), OpenAPI/client drift зелёные.
+  Миграции upgrade/check/downgrade и metadata drift входят в pytest; установленная core schema
+  отдельно проверена `alembic current/check`: `20261017_0012 (head)`, no new operations.
+- Frontend: **52 passed**; coverage statements **89.15%**, branches **80.35%**, functions
+  **85.52%**, lines **89.77%**. TypeScript, ESLint, Prettier и production build зелёные.
+- Реальный Chromium + FastAPI + PostgreSQL: **8 system E2E passed** (повтор `1.7 m`), включая полное
+  UI изменение/удаление всех четырёх сущностей. Отдельные responsive/a11y/error browser tests:
+  **13 passed**, восемь system tests намеренно skipped в обычном mock-only запуске (повтор `20.7 s`).
+- Дополнительно руками через браузер в отдельной реально работающей БД проверены расход с
+  новой категорией, исправление суммы/баланса, standalone compound deposit, ставка 10 → 12,5%,
+  перевод с карты во вклад, месячная аналитика, создание/изменение/удаление цели и создание/
+  предпросмотр/пауза регулярного правила с новой категорией. На 360px проверен путь к вкладу
+  через профиль; горизонтального overflow документа нет.
+- Обычный core stack пересобран и запущен: web `http://localhost:4173`, API `:8000`, worker и
+  PostgreSQL healthy. Перед миграцией сохранён custom-format backup (каталог проверен)
+  `tmp/core-before-stage14-20261019.dump`; файл игнорируется Git. Тестовые записи не вносились
+  в пользовательскую БД.
+
+Воспроизводимые команды из корня (на host с рабочими pnpm/Poetry и disposable PostgreSQL):
+
+```text
+poetry check --lock
+poetry run ruff check apps packages/backend tests migrations
+poetry run ruff format --check apps packages/backend tests migrations
+poetry run mypy
+poetry run python scripts/generate_api_client.py --check
+# TEST_DATABASE_URL points only to a disposable test server; pytest creates/drops its own DB.
+poetry run pytest
+pnpm typecheck
+pnpm lint
+pnpm format:check
+pnpm test
+pnpm build
+pnpm test:e2e
+# DATABASE_URL: separately migrated disposable system-E2E database, not the user's DB.
+pnpm test:e2e:system
+docker compose --profile core up --build --wait
+docker compose --profile core exec -T api python -m alembic current
+docker compose --profile core exec -T api python -m alembic check
+```
+
+На этом Windows host сломан global pnpm shim: те же scripts выполнены через `node` и
+установленный `pnpm/bin/pnpm.mjs` версии 12.12.1, без замены lockfile/dependencies.
+
+Ограничения этапа: legacy вклады оставлены в manual mode до проверки владельцем и включения
+автоначислений (не угадываем дубли старых фактов); FX/импорт банка/налоговое право и пересчёт
+будущих процентов от будущих recurring-пополнений не реализованы. Все сочетания условий во
+всех мобильных браузерах руками не проверялись; сложные календарные случаи покрыты engine tests.
+Удаление не уничтожает audit и не выполняет фактических банковских действий.
 
 ## Готово в этапе 13
 

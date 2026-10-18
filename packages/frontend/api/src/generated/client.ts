@@ -130,6 +130,14 @@ export type AnomalyPolicyResponse = {
   incomplete_buckets_evaluated: boolean;
 };
 
+export type ArchiveDepositRequest = {
+  version: number;
+};
+
+export type ArchiveGoalRequest = {
+  version: number;
+};
+
 export type BaselineExpenseResponse = {
   account_id: string;
   monthly_median: MoneyResponse;
@@ -197,9 +205,21 @@ export type ComparisonMetricResponse = {
   change_rate: (string) | (null);
 };
 
+export type CorrectionRequest = {
+  kind: "income" | "expense" | "transfer" | "adjustment";
+  account_id: string;
+  destination_account_id?: (string) | (null);
+  category_id?: (string) | (null);
+  money: MoneyInput;
+  occurred_at: string;
+  description?: string;
+  reason: string;
+  tag_ids?: Array<string>;
+};
+
 export type CreateAccountRequest = {
   name: string;
-  kind: "cash" | "bank" | "savings" | "deposit" | "other_asset";
+  kind: "cash" | "bank" | "other_asset";
   currency: string;
   opening_balance?: (MoneyInput) | (null);
   opening_balance_occurred_at?: (string) | (null);
@@ -218,7 +238,7 @@ export type CreateCategoryRequest = {
 };
 
 export type CreateDepositRequest = {
-  principal_account_id: string;
+  name: string;
   currency: string;
   opened_on: string;
   matures_on: string;
@@ -232,6 +252,8 @@ export type CreateDepositRequest = {
   cashflow_cutoff_inclusive: boolean;
   early_close_rule: EarlyCloseRuleInput;
   tax_rate: RateInput;
+  automatic_interest?: boolean;
+  opening_balance: MoneyInput;
 };
 
 export type CreateRecurringRuleRequest = {
@@ -311,6 +333,7 @@ export type DepositInterestRequest = {
 export type DepositTermsResponse = {
   id: string;
   principal_account_id: string;
+  name: string;
   currency: string;
   opened_on: string;
   matures_on: string;
@@ -325,6 +348,9 @@ export type DepositTermsResponse = {
   early_close_rule: EarlyCloseRuleResponse;
   tax_rate: string;
   algorithm_version: string;
+  archived: boolean;
+  version: number;
+  automatic_interest: boolean;
 };
 
 export type DepositValuationResponse = {
@@ -333,6 +359,8 @@ export type DepositValuationResponse = {
   closes_on: string;
   current_principal: MoneyResponse;
   accrued_interest: MoneyResponse;
+  earned_interest: MoneyResponse;
+  ledger_balance: MoneyResponse;
   current_value: MoneyResponse;
   projected_maturity_value: MoneyResponse;
   effective_yield: (string) | (null);
@@ -482,6 +510,7 @@ export type GoalResponse = {
   priority: number;
   linked_account_id: (string) | (null);
   version: number;
+  archived: boolean;
 };
 
 export type HTTPValidationError = {
@@ -815,6 +844,7 @@ export type TransactionResponse = {
   source: string;
   category_id: (string) | (null);
   reversal_of_id: (string) | (null);
+  reversed_by_id: (string) | (null);
   deposit_id: (string) | (null);
   tag_ids: Array<string>;
   postings: Array<PostingResponse>;
@@ -835,6 +865,28 @@ export type UpdateAccountRequest = {
   version: number;
   name?: (string) | (null);
   archived?: (boolean) | (null);
+  kind?: ("cash" | "bank" | "other_asset") | (null);
+  balance?: (MoneyInput) | (null);
+  balance_occurred_at?: (string) | (null);
+};
+
+export type UpdateDepositRequest = {
+  name: string;
+  currency: string;
+  opened_on: string;
+  matures_on: string;
+  rate_periods: Array<RatePeriodInput>;
+  capitalization_frequency: CapitalizationFrequency;
+  day_count_convention: DayCountConvention;
+  rounding_policy: RoundingPolicy;
+  interest_rounding_frequency: InterestRoundingFrequency;
+  timezone: string;
+  cashflow_cutoff_time: string;
+  cashflow_cutoff_inclusive: boolean;
+  early_close_rule: EarlyCloseRuleInput;
+  tax_rate: RateInput;
+  automatic_interest?: boolean;
+  version: number;
 };
 
 export type UpdateGoalRequest = {
@@ -1363,6 +1415,20 @@ export class FinancialAnalyticsClient {
     return this.request<TransactionResponse>("POST", path, query, args.body, headers);
   }
 
+  async correctTransaction(args: { transactionId: string; idempotencyKey: string; xCSRFToken: (string) | (null); body: CorrectionRequest; }): Promise<TransactionResponse> {
+    let path = "/api/v1/transactions/{transaction_id}/correction";
+    path = path.replace("{transaction_id}", encodeURIComponent(String(args.transactionId)));
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.idempotencyKey !== undefined && args.idempotencyKey !== null) {
+      headers["Idempotency-Key"] = String(args.idempotencyKey);
+    }
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<TransactionResponse>("POST", path, query, args.body, headers);
+  }
+
   async previewRecurringOccurrences(args: { body: PreviewOccurrencesRequest; }): Promise<Array<PreviewOccurrenceResponse>> {
     let path = "/api/v1/recurring-rules/preview";
     const query = new URLSearchParams();
@@ -1480,6 +1546,28 @@ export class FinancialAnalyticsClient {
     const query = new URLSearchParams();
     const headers: Record<string, string> = {};
     return this.request<DepositTermsResponse>("GET", path, query, undefined, headers);
+  }
+
+  async updateDeposit(args: { depositId: string; xCSRFToken: (string) | (null); body: UpdateDepositRequest; }): Promise<DepositTermsResponse> {
+    let path = "/api/v1/deposits/{deposit_id}";
+    path = path.replace("{deposit_id}", encodeURIComponent(String(args.depositId)));
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<DepositTermsResponse>("PUT", path, query, args.body, headers);
+  }
+
+  async archiveDeposit(args: { depositId: string; xCSRFToken: (string) | (null); body: ArchiveDepositRequest; }): Promise<DepositTermsResponse> {
+    let path = "/api/v1/deposits/{deposit_id}";
+    path = path.replace("{deposit_id}", encodeURIComponent(String(args.depositId)));
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<DepositTermsResponse>("DELETE", path, query, args.body, headers);
   }
 
   async recordDepositCashflow(args: { depositId: string; idempotencyKey: string; xCSRFToken: (string) | (null); body: DepositCashflowRequest; }): Promise<TransactionResponse> {
@@ -1672,6 +1760,17 @@ export class FinancialAnalyticsClient {
       headers["X-CSRF-Token"] = String(args.xCSRFToken);
     }
     return this.request<GoalResponse>("PUT", path, query, args.body, headers);
+  }
+
+  async archiveFinancialGoal(args: { goalId: string; xCSRFToken: (string) | (null); body: ArchiveGoalRequest; }): Promise<GoalResponse> {
+    let path = "/api/v1/goals/{goal_id}";
+    path = path.replace("{goal_id}", encodeURIComponent(String(args.goalId)));
+    const query = new URLSearchParams();
+    const headers: Record<string, string> = {};
+    if (args.xCSRFToken !== undefined && args.xCSRFToken !== null) {
+      headers["X-CSRF-Token"] = String(args.xCSRFToken);
+    }
+    return this.request<GoalResponse>("DELETE", path, query, args.body, headers);
   }
 
   async getForecast(args: { currency: string; through?: (string) | (null); scenarioId?: (string) | (null); }): Promise<ForecastRunResponse> {

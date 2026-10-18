@@ -62,9 +62,10 @@ test("deposit form rejects an impossible term without a mutation", async ({ page
   await mockFinanceApi(page);
   await page.goto("/app/deposits");
   await page.getByRole("button", { name: "Добавить вклад" }).click();
+  await page.getByLabel("Название вклада").fill("Тестовый вклад");
   await page.getByLabel("Открытие").fill("2027-01-01");
   await page.getByLabel("Окончание").fill("2026-01-01");
-  await page.getByRole("button", { name: "Создать и построить график" }).click();
+  await page.getByRole("button", { name: "Создать вклад", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("позже открытия");
 });
 

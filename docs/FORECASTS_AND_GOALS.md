@@ -41,10 +41,15 @@ closing              = opening + scheduled flows - irregular expense
                        + one-time flows + deposit interest + savings interest
 ```
 
-User rate применяется только к положительному остатку счёта типа `savings` после денежных
-потоков месяца. Для `deposit` используется его собственный versioned interest schedule;
-scenario rate не переписывает договор вклада. Transfer даёт две account deltas и нулевое
-изменение капитала.
+С этапа 14 обычные пользовательские счета не приносят процент (включая legacy `savings`).
+Параметр scenario savings rate сохраняется в совместимом контракте, но такие счета не делает
+процентными. Для вклада используется его собственный versioned interest schedule;
+scenario rate не переписывает договор. Transfer даёт две account deltas и нулевое изменение
+капитала. Principal flows берутся из того же helper, что и valuation: начальный остаток и
+обычный перевод не теряются, капитализированные проценты не учитываются второй раз.
+
+Цель редактируется с optimistic version; удаление выставляет archived и сохраняет audit.
+Архивная цель исключена из списка и следующего goal plan. Изменение цели не меняет ledger.
 
 ## Baseline нерегулярных расходов
 

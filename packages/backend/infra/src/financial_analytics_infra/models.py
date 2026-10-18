@@ -277,6 +277,8 @@ class DepositTermsModel(Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint("currency ~ '^[A-Z]{3}$'", name="deposit_terms_currency"),
+        CheckConstraint("char_length(btrim(name)) > 0", name="deposit_terms_name"),
+        CheckConstraint("version > 0", name="deposit_terms_version"),
         CheckConstraint("matures_on > opened_on", name="deposit_terms_date_order"),
         CheckConstraint(
             "capitalization_frequency IN ('daily', 'monthly_calendar_end')",
@@ -317,6 +319,10 @@ class DepositTermsModel(Base):
         PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
     principal_account_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    automatic_interest: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     opened_on: Mapped[date] = mapped_column(Date, nullable=False)
     matures_on: Mapped[date] = mapped_column(Date, nullable=False)
@@ -331,9 +337,16 @@ class DepositTermsModel(Base):
     early_close_rate: Mapped[Decimal | None] = mapped_column(Numeric(20, 12))
     tax_rate: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
     algorithm_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    __mapper_args__ = {"version_id_col": version}
 
 
 class DepositRatePeriodModel(Base):
@@ -899,6 +912,7 @@ class FinancialGoalModel(Base):
     )
     priority: Mapped[int] = mapped_column(Integer, nullable=False)
     linked_account_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")

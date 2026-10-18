@@ -16,18 +16,26 @@ Manual acceptance paths (use a disposable local database):
 
 1. `/start`: create the master, choose currency/timezone, create a bank account with opening
    balance `10000.00 RUB`; confirm the dashboard shows that exact amount.
-2. **Операции**: create an expense category and spend `125.25 RUB`; confirm `9874.75 RUB` on the
+2. **Операции**: type a new category directly in the expense form and spend `125.25 RUB`; confirm `9874.75 RUB` on the
    account, an expense posting in the journal, and the same change in reports/forecast.
 3. **Регулярные**: preview a monthly subscription in the profile timezone, create it, inspect
    the next local/UTC occurrence and pause/resume. Reprocessing one occurrence must not duplicate it.
-4. **Вклады**: create terms with month-end capitalization and a linked account, add a cashflow,
-   inspect the daily schedule, projected maturity and actual/planned reconciliation.
+4. **Вклады**: create a standalone deposit with amount and `10` percent; inspect nonzero schedule,
+   projected maturity and automatic completed-period postings. For funding from an existing
+   account, start with zero and use a transfer in **Операции**, not a second opening balance.
 5. **Прогноз**: select a date, save an income/expense scenario, compare with the baseline; verify
    that the current account balance and transaction journal did not change.
 6. **Цели**: add a dated target, review required contribution, gap, shortfall and priority;
    verify that saving a goal did not post a transaction.
 7. **Совет**: request an explanation, inspect evidence/confidence and compare the ledger before
    and after. With provider disabled, the page must show a usable optional-provider state.
+8. Edit/delete the expense, account, deposit and goal; verify recalculated balances and plans.
+   Account/deposit/goal deletion archives, operation deletion appends a reversal. History is
+   retained, not physically erased. Edit automatic interest through the deposit terms.
+
+The stage 14 regression matrix and legacy migration rules are in
+[CORE_FINANCE_ACCEPTANCE.md](CORE_FINANCE_ACCEPTANCE.md). On narrow screens, **Профиль** exposes
+links to the remaining sections, including accounts, deposits and goals.
 
 The automated release walkthrough is `scripts/release_smoke.py`; it deliberately needs an
 empty database because onboarding is single-use. Independent manual sign-off on the chosen

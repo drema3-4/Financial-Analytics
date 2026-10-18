@@ -104,7 +104,7 @@ ledger IDs. Response schema запрещает extra fields, а application от
 | Profile | `profiles`, `user_preferences` |
 | Finance | `accounts`, `transactions`, `postings`, `categories`, `category_groups`, `tags`, `transaction_tags` |
 | Scheduling | `recurring_rules`, `recurring_occurrences`, `jobs` |
-| Deposits | `deposit_terms`, `deposit_rate_periods`; plan вычисляется, fact хранится в linked ledger transactions |
+| Deposits | versioned `deposit_terms`, `deposit_rate_periods`; внутренний account создаётся атомарно, principal flows читаются из общего ledger, due interest сверяет worker |
 | Planning | `forecast_scenarios`, `forecast_runs`, `goals`, `goal_allocations` |
 | AI | этап 09 не хранит advice; durable consent/history остаются будущим отдельным решением |
 | Control | `audit_events`, `idempotency_keys`, `outbox_events`, `schema_metadata` |

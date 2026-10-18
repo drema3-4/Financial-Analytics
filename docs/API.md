@@ -1,4 +1,4 @@
-# API contract through milestone 13
+# API contract through milestone 14
 
 FastAPI публикует актуальную OpenAPI-схему по `/openapi.json` и интерактивную документацию
 по `/docs`. Зафиксированный snapshot находится в `docs/openapi.json`; из него
@@ -62,8 +62,8 @@ known-token replay is audited.
 
 | Method | Path | Result |
 |---|---|---|
-| `POST`, `GET` | `/accounts` | создать/list accounts; optional opening balance — adjustment posting |
-| `GET`, `PATCH` | `/accounts/{id}` | account с rebuilt balance; rename/archive по optimistic `version` |
+| `POST`, `GET` | `/accounts` | обычные `cash|bank|other_asset`; opening balance — adjustment posting |
+| `GET`, `PATCH` | `/accounts/{id}` | name/kind/archive и optional target `balance` по `version`; изменение остатка — adjustment |
 | `POST`, `GET` | `/category-groups` | древовидные группы; list включает принадлежащие группе categories |
 | `POST`, `GET` | `/categories` | income/expense categories |
 | `POST`, `GET` | `/tags` | transaction tags |
@@ -72,6 +72,7 @@ known-token replay is audited.
 | `POST` | `/transfers` | same-currency transfer между asset accounts |
 | `POST` | `/adjustments` | signed manual reconciliation через system-equity account |
 | `POST` | `/transactions/{id}/reversal` | полная противоположная проводка со ссылками на original |
+| `POST` | `/transactions/{id}/correction` | атомарные reversal на исходную дату и заменяющая операция |
 | `GET` | `/transactions`, `/transactions/{id}` | journal/detail; posted transaction не имеет DELETE API |
 | `GET` | `/transactions/export.csv` | filtered UTF-8 CSV с BOM и CRLF |
 
@@ -127,8 +128,9 @@ owner-scoped; чужой UUID неотличим от отсутствующег
 
 | Method | Path | Result |
 |---|---|---|
-| `POST`, `GET` | `/deposits` | создать immutable terms или получить owner list |
+| `POST`, `GET` | `/deposits` | создать отдельный вклад с начальной суммой или получить active owner list |
 | `GET` | `/deposits/{id}` | получить terms и версию алгоритма |
+| `PUT`, `DELETE` | `/deposits/{id}` | изменить условия / архивировать с optimistic version и audit |
 | `POST` | `/deposits/{id}/cashflows` | linked same-currency transfer: signed пополнение/снятие |
 | `POST` | `/deposits/{id}/interest-postings` | immutable фактический signed interest posting |
 | `GET` | `/deposits/{id}/valuation?as_of=...&close_on=...` | schedule, current/accrued/projected values, effective yield и reconciliation |
@@ -138,7 +140,8 @@ day-count, rounding mode/frequency, timezone/cut-off/equality rule, early-close 
 rate; банковских defaults нет. `as_of` обязателен и означает начало local calendar date.
 `close_on` optional и активирует явно заданную early-close policy.
 
-Schedule — расчётный план и не создаёт postings. Cashflow остаётся transaction `transfer` с
+Чистый engine возвращает schedule без IO; application worker автоматически проводит due interest
+при `automatic_interest=true`. Cashflow совместимого endpoint остаётся transaction `transfer` с
 `deposit_id`; банковский процент — отдельная transaction `interest`. Исправление выполняется
 reversal/новой posting, поэтому reconciliation меняется, но план и terms не переписываются.
 Полная семантика и формулы — в [DEPOSIT_CALCULATIONS.md](DEPOSIT_CALCULATIONS.md).
@@ -300,6 +303,32 @@ Validation errors дополнительно содержат `errors`; необ
 Ledger-specific errors: `resource_not_found` (`404`, одинаково для отсутствующего и чужого
 resource), `idempotency_conflict`/`resource_conflict` (`409`), `invalid_cursor`,
 `invalid_date_range` и `domain_validation_error` (`422`).
+
+## Корректирующий этап 14
+
+`POST /deposits` принимает `name`, `opening_balance` (включая `0`) и условия; внутренний
+`principal_account_id` генерирует сервер. Этот account не входит в `GET /accounts`, но его UUID
+можно использовать в обычных income/expense/transfer/adjustment. Поэтому переводы между двумя
+вкладами, со счёта на вклад и обратно проходят через единый ledger API.
+
+`PUT /deposits/{id}` принимает полные условия и `version`, сохраняет before/after audit и
+пересчитывает проценты. Валюта и внутренний account неизменяемы. `DELETE /deposits/{id}` и
+`DELETE /goals/{id}` с JSON `{ "version": n }` архивируют объект, сохраняя историю.
+
+`POST /transactions/{id}/correction` принимает `kind`, `account_id`, optional
+`destination_account_id|category_id`, `money`, `occurred_at`, `description`, `reason`, `tag_ids`.
+Требует CSRF и `Idempotency-Key`; ошибка в замене откатывает всё. Ответ журнала содержит
+`reversed_by_id`; повторное исправление или сторно отменённой строки возвращает `409`.
+
+Worker и mutations principal/условий сверяют due interest с проведёнными суммами под
+owner/deposit lock. В ledger добавляется только ненулевая разность. Valuation возвращает
+`earned_interest` (весь доход, включая капитализированный), `ledger_balance` и `current_value`
+со всеми денежными потоками выбранной даты плюс ещё не капитализированные проценты. `as_of`
+можно запросить после погашения; сам domain engine сохраняет семантику начала local date.
+
+Ответ terms содержит `automatic_interest`. Старые договоры мигрируют с `false`, чтобы
+не начислять проценты задним числом несколько раз на общий остаток. Включение после проверки
+условий выполняется `PUT`; активные legacy-дубли на одном account сначала архивируются.
 
 ## Request tracing
 

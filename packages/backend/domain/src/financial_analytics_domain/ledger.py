@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from uuid import UUID
 
@@ -132,6 +132,7 @@ class Transaction:
     source: str = "manual"
     tag_ids: tuple[UUID, ...] = ()
     deposit_id: UUID | None = None
+    reversed_by_id: UUID | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if len(self.postings) < 2:

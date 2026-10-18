@@ -6,6 +6,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Annotated, Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -76,13 +77,14 @@ class EarlyCloseRuleInput(ApiModel):
         return self
 
 
-class CreateDepositRequest(ApiModel):
+class DepositTermsInput(ApiModel):
     model_config = ConfigDict(
         extra="forbid",
         json_schema_extra={
             "examples": [
                 {
-                    "principal_account_id": "018f0000-0000-7000-8000-000000000001",
+                    "name": "Резерв на год",
+                    "opening_balance": {"amount": "100000.00", "currency": "RUB"},
                     "currency": "RUB",
                     "opened_on": "2026-10-13",
                     "matures_on": "2027-10-13",
@@ -110,7 +112,7 @@ class CreateDepositRequest(ApiModel):
         },
     )
 
-    principal_account_id: UUID
+    name: str = Field(min_length=1, max_length=160)
     currency: str = Field(pattern=r"^[A-Z]{3}$")
     opened_on: date
     matures_on: date
@@ -124,6 +126,27 @@ class CreateDepositRequest(ApiModel):
     cashflow_cutoff_inclusive: bool
     early_close_rule: EarlyCloseRuleInput
     tax_rate: RateInput
+    automatic_interest: bool = True
+
+
+class CreateDepositRequest(DepositTermsInput):
+    opening_balance: MoneyInput
+
+    @model_validator(mode="after")
+    def validate_opening_balance(self) -> CreateDepositRequest:
+        if self.opening_balance.currency != self.currency:
+            raise ValueError("opening balance currency must match deposit currency")
+        if Decimal(self.opening_balance.amount) < 0:
+            raise ValueError("opening balance must not be negative")
+        return self
+
+
+class UpdateDepositRequest(DepositTermsInput):
+    version: int = Field(ge=1)
+
+
+class ArchiveDepositRequest(ApiModel):
+    version: int = Field(ge=1)
 
 
 class RatePeriodResponse(ApiModel):
@@ -140,6 +163,7 @@ class EarlyCloseRuleResponse(ApiModel):
 class DepositTermsResponse(ApiModel):
     id: UUID
     principal_account_id: UUID
+    name: str
     currency: str
     opened_on: date
     matures_on: date
@@ -154,6 +178,9 @@ class DepositTermsResponse(ApiModel):
     early_close_rule: EarlyCloseRuleResponse
     tax_rate: str
     algorithm_version: str
+    archived: bool
+    version: int
+    automatic_interest: bool
 
 
 class DepositCashflowRequest(ApiModel):
@@ -210,6 +237,8 @@ class DepositValuationResponse(ApiModel):
     closes_on: date
     current_principal: MoneyResponse
     accrued_interest: MoneyResponse
+    earned_interest: MoneyResponse
+    ledger_balance: MoneyResponse
     current_value: MoneyResponse
     projected_maturity_value: MoneyResponse
     effective_yield: str | None
@@ -261,7 +290,7 @@ def create_deposit(
     terms = DepositTerms(
         id=uuid4(),
         owner_id=authenticated.profile.id,
-        principal_account_id=payload.principal_account_id,
+        principal_account_id=uuid4(),
         currency=Currency(payload.currency),
         opened_on=payload.opened_on,
         matures_on=payload.matures_on,
@@ -284,6 +313,8 @@ def create_deposit(
         ),
         tax_rate=payload.tax_rate.to_domain(),
         algorithm_version=DEPOSIT_ALGORITHM_VERSION,
+        name=payload.name.strip(),
+        automatic_interest=payload.automatic_interest,
     )
     saved = _service(request).create(
         terms=terms,
@@ -291,6 +322,10 @@ def create_deposit(
         idempotency_key=idempotency_key,
         request_hash=_request_hash(payload, context="create_deposit"),
         request_id=_request_id(request),
+        initial_balance=payload.opening_balance.to_domain(),
+        opening_occurred_at=Instant(
+            datetime.combine(payload.opened_on, time(12), tzinfo=ZoneInfo(payload.timezone))
+        ),
     )
     return _terms_response(saved)
 
@@ -310,6 +345,59 @@ def get_deposit(
     deposit_id: UUID, request: Request, authenticated: Authenticated
 ) -> DepositTermsResponse:
     return _terms_response(_service(request).get(authenticated.profile.id, deposit_id))
+
+
+@router.put(
+    "/{deposit_id}",
+    operation_id="updateDeposit",
+    response_model=DepositTermsResponse,
+    responses=_problem_responses(401, 403, 404, 409, 422),
+)
+def update_deposit(
+    deposit_id: UUID,
+    payload: UpdateDepositRequest,
+    request: Request,
+    authenticated: MutatingSession,
+) -> DepositTermsResponse:
+    previous = _service(request).get(authenticated.profile.id, deposit_id)
+    terms = _terms_from_input(
+        payload,
+        owner_id=authenticated.profile.id,
+        deposit_id=deposit_id,
+        principal_account_id=previous.principal_account_id,
+        version=payload.version,
+    )
+    return _terms_response(
+        _service(request).update(
+            terms=terms,
+            actor_id=authenticated.profile.id,
+            expected_version=payload.version,
+            request_id=_request_id(request),
+        )
+    )
+
+
+@router.delete(
+    "/{deposit_id}",
+    operation_id="archiveDeposit",
+    response_model=DepositTermsResponse,
+    responses=_problem_responses(401, 403, 404, 409),
+)
+def archive_deposit(
+    deposit_id: UUID,
+    payload: ArchiveDepositRequest,
+    request: Request,
+    authenticated: MutatingSession,
+) -> DepositTermsResponse:
+    return _terms_response(
+        _service(request).archive(
+            owner_id=authenticated.profile.id,
+            actor_id=authenticated.profile.id,
+            deposit_id=deposit_id,
+            expected_version=payload.version,
+            request_id=_request_id(request),
+        )
+    )
 
 
 @router.post(
@@ -395,6 +483,7 @@ def _terms_response(terms: DepositTerms) -> DepositTermsResponse:
     return DepositTermsResponse(
         id=terms.id,
         principal_account_id=terms.principal_account_id,
+        name=terms.name,
         currency=terms.currency.code,
         opened_on=terms.opened_on,
         matures_on=terms.matures_on,
@@ -423,6 +512,49 @@ def _terms_response(terms: DepositTerms) -> DepositTermsResponse:
         ),
         tax_rate=_rate_string(terms.tax_rate),
         algorithm_version=terms.algorithm_version,
+        archived=terms.archived,
+        version=terms.version,
+        automatic_interest=terms.automatic_interest,
+    )
+
+
+def _terms_from_input(
+    payload: DepositTermsInput,
+    *,
+    owner_id: UUID,
+    deposit_id: UUID,
+    principal_account_id: UUID,
+    version: int,
+) -> DepositTerms:
+    return DepositTerms(
+        id=deposit_id,
+        owner_id=owner_id,
+        principal_account_id=principal_account_id,
+        currency=Currency(payload.currency),
+        opened_on=payload.opened_on,
+        matures_on=payload.matures_on,
+        rate_periods=tuple(
+            DepositRatePeriod(item.starts_on, item.ends_on, item.nominal_rate.to_domain())
+            for item in payload.rate_periods
+        ),
+        capitalization_frequency=payload.capitalization_frequency,
+        day_count_convention=payload.day_count_convention,
+        rounding_policy=payload.rounding_policy,
+        interest_rounding_frequency=payload.interest_rounding_frequency,
+        timezone=payload.timezone,
+        cashflow_cutoff_time=payload.cashflow_cutoff_time,
+        cashflow_cutoff_inclusive=payload.cashflow_cutoff_inclusive,
+        early_close_rule=EarlyCloseRule(
+            payload.early_close_rule.policy,
+            None
+            if payload.early_close_rule.nominal_rate is None
+            else payload.early_close_rule.nominal_rate.to_domain(),
+        ),
+        tax_rate=payload.tax_rate.to_domain(),
+        algorithm_version=DEPOSIT_ALGORITHM_VERSION,
+        name=payload.name.strip(),
+        version=version,
+        automatic_interest=payload.automatic_interest,
     )
 
 
@@ -441,6 +573,8 @@ def _valuation_response(value: DepositValuation) -> DepositValuationResponse:
         closes_on=projection.closes_on,
         current_principal=_money_response(projection.current_principal),
         accrued_interest=_money_response(projection.accrued_interest),
+        earned_interest=_money_response(value.earned_interest),
+        ledger_balance=_money_response(value.ledger_balance),
         current_value=_money_response(projection.current_value),
         projected_maturity_value=_money_response(projection.projected_closing_value),
         effective_yield=(

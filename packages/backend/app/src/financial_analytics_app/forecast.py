@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+from financial_analytics_app.deposit_ledger import principal_cashflows
 from financial_analytics_app.ledger import ResourceConflictError, ResourceNotFoundError
 from financial_analytics_app.ports import (
     AuditEvent,
@@ -18,9 +19,7 @@ from financial_analytics_app.ports import (
 from financial_analytics_app.services import IdempotencyConflictError
 from financial_analytics_domain import (
     Account,
-    AccountKind,
     Currency,
-    DepositCashflow,
     FinancialGoal,
     ForecastAccount,
     ForecastAssumptions,
@@ -208,7 +207,8 @@ class ForecastService:
         if goal.owner_id != actor_id:
             raise OwnershipError("actor must own the financial goal")
         with self._uow_factory.open(goal.owner_id) as uow:
-            if uow.forecasts.get_goal(goal.id) is None:
+            previous = uow.forecasts.get_goal(goal.id)
+            if previous is None or previous.archived:
                 raise ResourceNotFoundError("financial goal was not found")
             self._validate_goal_account(uow, goal)
             saved = uow.forecasts.save_goal(goal, expected_version=expected_version)
@@ -219,10 +219,61 @@ class ForecastService:
                 "financial_goal",
                 goal.id,
                 request_id,
+                {
+                    "previous_version": expected_version,
+                    "version": saved.version,
+                    "before": self._goal_snapshot(previous),
+                    "after": self._goal_snapshot(saved),
+                },
+            )
+            uow.commit()
+            return saved
+
+    def archive_goal(
+        self,
+        *,
+        owner_id: UUID,
+        actor_id: UUID,
+        goal_id: UUID,
+        expected_version: int,
+        request_id: UUID | None,
+    ) -> FinancialGoal:
+        if owner_id != actor_id:
+            raise OwnershipError("actor must own the financial goal")
+        with self._uow_factory.open(owner_id) as uow:
+            goal = uow.forecasts.get_goal(goal_id)
+            if goal is None or goal.archived:
+                raise ResourceNotFoundError("financial goal was not found")
+            saved = uow.forecasts.save_goal(
+                replace(goal, archived=True), expected_version=expected_version
+            )
+            self._audit(
+                uow,
+                actor_id,
+                "goal.archived",
+                "financial_goal",
+                goal.id,
+                request_id,
                 {"previous_version": expected_version, "version": saved.version},
             )
             uow.commit()
             return saved
+
+    @staticmethod
+    def _goal_snapshot(goal: FinancialGoal) -> dict[str, object]:
+        return {
+            "name": goal.name,
+            "target": str(goal.target.amount),
+            "currency": goal.target.currency.code,
+            "saved_amount": str(goal.saved_amount.amount),
+            "target_date": goal.target_date.isoformat(),
+            "priority": goal.priority,
+            "linked_account_id": None
+            if goal.linked_account_id is None
+            else str(goal.linked_account_id),
+            "archived": goal.archived,
+            "version": goal.version,
+        }
 
     def list_goals(self, owner_id: UUID) -> tuple[FinancialGoal, ...]:
         with self._uow_factory.open(owner_id) as uow:
@@ -231,7 +282,7 @@ class ForecastService:
     def get_goal(self, owner_id: UUID, goal_id: UUID) -> FinancialGoal:
         with self._uow_factory.open(owner_id) as uow:
             goal = uow.forecasts.get_goal(goal_id)
-            if goal is None:
+            if goal is None or goal.archived:
                 raise ResourceNotFoundError("financial goal was not found")
             return goal
 
@@ -355,7 +406,7 @@ class ForecastService:
                 name=item.name,
                 kind=item.kind.value,
                 opening_balance=Money.of(balances[item.id], currency),
-                interest_bearing=item.kind is AccountKind.SAVINGS,
+                interest_bearing=False,
             )
             for item in sorted(accounts, key=lambda value: str(value.id))
         )
@@ -620,27 +671,8 @@ def _deposit_cashflows(
     for terms in uow.deposits.list():
         if terms.currency != currency or not terms.opened_on <= as_of < terms.matures_on:
             continue
-        cashflows: list[DepositCashflow] = []
         transactions = uow.ledger.list_deposit_transactions(terms.id)
-        by_id = {item.id: item for item in transactions}
-        for transaction in transactions:
-            classified = transaction.kind
-            if classified is TransactionKind.REVERSAL and transaction.reversal_of_id is not None:
-                original = by_id.get(transaction.reversal_of_id)
-                if original is None:
-                    original = uow.ledger.get_transaction(transaction.reversal_of_id)
-                if original is None:
-                    continue
-                classified = original.kind
-            if classified is not TransactionKind.TRANSFER:
-                continue
-            principal = next(
-                posting.amount
-                for posting in transaction.postings
-                if posting.account_id == terms.principal_account_id
-            )
-            cashflows.append(DepositCashflow(transaction.id, transaction.occurred_at, principal))
-        projection = project_deposit(terms, tuple(cashflows), as_of=as_of)
+        projection = project_deposit(terms, principal_cashflows(terms, transactions), as_of=as_of)
         for index, entry in enumerate(projection.schedule):
             if as_of < entry.posting_date <= through and entry.net_interest.amount != 0:
                 result.append(

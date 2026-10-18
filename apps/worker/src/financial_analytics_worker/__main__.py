@@ -20,6 +20,7 @@ from financial_analytics_app import (
 )
 from financial_analytics_domain import Instant
 from financial_analytics_infra.database import Database
+from financial_analytics_infra.deposits import DepositAccrualProcessor
 from financial_analytics_infra.logging import redact_sensitive_text
 from financial_analytics_infra.mail import PostgresEmailJobRepository, SmtpEmailSender
 from financial_analytics_infra.repositories import PostgresUnitOfWorkFactory
@@ -98,7 +99,11 @@ def run() -> int:
             ),
             clock=clock,
         )
-        processor = CompositeJobProcessor(recurring_processor, email_processor)
+        processor = CompositeJobProcessor(
+            recurring_processor,
+            DepositAccrualProcessor(database.engine, clock=clock),
+            email_processor,
+        )
         worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:8]}"
         worker = Worker(database, heartbeat, processor, worker_id=worker_id)
         stop_requested = threading.Event()

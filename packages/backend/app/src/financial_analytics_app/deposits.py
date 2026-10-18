@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+from financial_analytics_app.deposit_ledger import (
+    actual_interest,
+    principal_cashflows,
+    reconcile_interest,
+)
 from financial_analytics_app.ledger import ResourceConflictError, ResourceNotFoundError
 from financial_analytics_app.ports import (
     AuditEvent,
@@ -17,6 +21,7 @@ from financial_analytics_app.ports import (
 )
 from financial_analytics_app.services import IdempotencyConflictError
 from financial_analytics_domain import (
+    Account,
     AccountKind,
     DepositCashflow,
     DepositProjection,
@@ -24,7 +29,6 @@ from financial_analytics_domain import (
     Instant,
     Money,
     Transaction,
-    TransactionKind,
     effective_cashflow_date,
     project_deposit,
 )
@@ -42,6 +46,8 @@ class InterestReconciliation:
 class DepositValuation:
     projection: DepositProjection
     reconciliation: tuple[InterestReconciliation, ...]
+    earned_interest: Money
+    ledger_balance: Money
 
 
 class DepositService:
@@ -64,6 +70,8 @@ class DepositService:
         idempotency_key: str,
         request_hash: str,
         request_id: UUID | None,
+        initial_balance: Money | None = None,
+        opening_occurred_at: Instant | None = None,
     ) -> DepositTerms:
         with self._uow_factory.open(terms.owner_id) as uow:
             replay_id = self._lock_and_replay(uow, "create_deposit", idempotency_key, request_hash)
@@ -73,13 +81,75 @@ class DepositService:
                     raise RuntimeError("idempotency record points to a missing deposit")
                 return replay
             account = uow.ledger.get_account(terms.principal_account_id)
-            if account is None or account.kind is not AccountKind.DEPOSIT:
+            if account is None:
+                account = Account(
+                    id=terms.principal_account_id,
+                    owner_id=terms.owner_id,
+                    name=terms.name,
+                    kind=AccountKind.DEPOSIT,
+                    currency=terms.currency,
+                )
+                uow.ledger.add_account(account)
+                self._audit(
+                    uow,
+                    actor_id,
+                    "ledger.account_created",
+                    account.id,
+                    request_id,
+                    {"kind": AccountKind.DEPOSIT.value, "internal": True},
+                    aggregate_type="account",
+                )
+            elif account.kind is not AccountKind.DEPOSIT:
                 raise ResourceNotFoundError("deposit principal account was not found")
             if account.archived:
                 raise ResourceConflictError("archived account cannot back a deposit")
             if account.currency != terms.currency:
                 raise ResourceConflictError("deposit and principal account currencies differ")
             uow.deposits.add(terms)
+            if initial_balance is not None and initial_balance.amount != 0:
+                if opening_occurred_at is None:
+                    raise ResourceConflictError("deposit opening balance requires a timestamp")
+                now = self._clock()
+                if terms.opened_on == now.value.astimezone(ZoneInfo(terms.timezone)).date():
+                    opening_occurred_at = Instant(min(opening_occurred_at.value, now.value))
+                if initial_balance.currency != terms.currency or initial_balance.amount <= 0:
+                    raise ResourceConflictError(
+                        "deposit opening balance must be positive in deposit currency"
+                    )
+                equity, created = uow.ledger.get_or_create_system_account(
+                    AccountKind.SYSTEM_EQUITY, terms.currency
+                )
+                if created:
+                    self._audit(
+                        uow,
+                        actor_id,
+                        "ledger.system_account_created",
+                        equity.id,
+                        request_id,
+                        {"kind": equity.kind.value, "currency": terms.currency.code},
+                        aggregate_type="account",
+                    )
+                opening = Transaction.adjustment(
+                    id=self._uuid_factory(),
+                    owner_id=terms.owner_id,
+                    asset=account,
+                    equity_account=equity,
+                    amount=initial_balance,
+                    occurred_at=opening_occurred_at,
+                    posting_ids=(self._uuid_factory(), self._uuid_factory()),
+                    description="Opening deposit balance",
+                    entry_source="system",
+                )
+                uow.ledger.add_transaction(opening, actor_id=actor_id, request_id=request_id)
+                self._audit(
+                    uow,
+                    actor_id,
+                    "deposit.opening_balance_recorded",
+                    opening.id,
+                    request_id,
+                    {"deposit_id": str(terms.id)},
+                    aggregate_type="transaction",
+                )
             self._audit(
                 uow,
                 actor_id,
@@ -97,6 +167,14 @@ class DepositService:
                 "deposit",
                 terms.id,
             )
+            reconcile_interest(
+                uow,
+                terms,
+                now=self._clock(),
+                actor_id=actor_id,
+                uuid_factory=self._uuid_factory,
+                request_id=request_id,
+            )
             uow.commit()
             return terms
 
@@ -107,6 +185,106 @@ class DepositService:
     def get(self, owner_id: UUID, deposit_id: UUID) -> DepositTerms:
         with self._uow_factory.open(owner_id) as uow:
             return self._require_deposit(uow, deposit_id)
+
+    def update(
+        self,
+        *,
+        terms: DepositTerms,
+        actor_id: UUID,
+        expected_version: int,
+        request_id: UUID | None,
+    ) -> DepositTerms:
+        with self._uow_factory.open(terms.owner_id) as uow:
+            uow.idempotency.lock("deposit_reconciliation", str(terms.id))
+            previous = self._require_deposit(uow, terms.id)
+            if previous.version != expected_version:
+                raise ResourceConflictError("deposit version is stale")
+            if previous.principal_account_id != terms.principal_account_id:
+                raise ResourceConflictError("deposit principal account cannot be replaced")
+            if previous.currency != terms.currency:
+                raise ResourceConflictError("deposit currency cannot be changed")
+            if terms.automatic_interest and any(
+                item.id != terms.id and item.principal_account_id == terms.principal_account_id
+                for item in uow.deposits.list()
+            ):
+                raise ResourceConflictError(
+                    "archive duplicate legacy deposits before enabling automatic interest"
+                )
+            transactions = uow.ledger.list_deposit_transactions(terms.id)
+            cashflows = principal_cashflows(terms, transactions)
+            project_deposit(terms, cashflows, as_of=terms.opened_on)
+            saved = uow.deposits.save(terms, expected_version=expected_version)
+            account = uow.ledger.get_account(saved.principal_account_id)
+            if account is None:
+                raise RuntimeError("deposit principal account disappeared")
+            if account.name != saved.name:
+                uow.ledger.save_account(replace(account, name=saved.name))
+            self._audit(
+                uow,
+                actor_id,
+                "deposit.terms_updated",
+                saved.id,
+                request_id,
+                {"before": self._terms_snapshot(previous), "after": self._terms_snapshot(saved)},
+            )
+            reconcile_interest(
+                uow,
+                saved,
+                now=self._clock(),
+                actor_id=actor_id,
+                uuid_factory=self._uuid_factory,
+                request_id=request_id,
+            )
+            uow.commit()
+            return saved
+
+    def archive(
+        self,
+        *,
+        owner_id: UUID,
+        actor_id: UUID,
+        deposit_id: UUID,
+        expected_version: int,
+        request_id: UUID | None,
+    ) -> DepositTerms:
+        with self._uow_factory.open(owner_id) as uow:
+            uow.idempotency.lock("deposit_reconciliation", str(deposit_id))
+            previous = self._require_deposit(uow, deposit_id)
+            if previous.version != expected_version:
+                raise ResourceConflictError("deposit version is stale")
+            saved = uow.deposits.save(
+                replace(previous, archived=True), expected_version=expected_version
+            )
+            account = uow.ledger.get_account(saved.principal_account_id)
+            if account is None:
+                raise RuntimeError("deposit principal account disappeared")
+            if not account.archived and not any(
+                item.id != saved.id and item.principal_account_id == saved.principal_account_id
+                for item in uow.deposits.list()
+            ):
+                uow.ledger.save_account(replace(account, archived=True))
+            self._audit(
+                uow,
+                actor_id,
+                "deposit.archived",
+                saved.id,
+                request_id,
+                {"previous_version": expected_version, "version": saved.version},
+            )
+            uow.commit()
+            return saved
+
+    def accrue_due(self, owner_id: UUID) -> None:
+        with self._uow_factory.open(owner_id) as uow:
+            for terms in sorted(uow.deposits.list(), key=lambda item: item.id):
+                reconcile_interest(
+                    uow,
+                    terms,
+                    now=self._clock(),
+                    actor_id=owner_id,
+                    uuid_factory=self._uuid_factory,
+                )
+            uow.commit()
 
     def record_cashflow(
         self,
@@ -240,35 +418,51 @@ class DepositService:
         with self._uow_factory.open(owner_id) as uow:
             terms = self._require_deposit(uow, deposit_id)
             transactions = uow.ledger.list_deposit_transactions(deposit_id)
-            cashflows: list[DepositCashflow] = []
-            actual_by_date: defaultdict[date, Decimal] = defaultdict(Decimal)
-            zone = ZoneInfo(terms.timezone)
-            for transaction in transactions:
-                classified = transaction.kind
-                if classified is TransactionKind.REVERSAL:
-                    if transaction.reversal_of_id is None:
-                        raise RuntimeError("reversal is missing its original transaction")
-                    original = uow.ledger.get_transaction(transaction.reversal_of_id)
-                    if original is None:
-                        raise RuntimeError("deposit reversal original is missing")
-                    classified = original.kind
-                principal_amount = next(
-                    posting.amount
-                    for posting in transaction.postings
-                    if posting.account_id == terms.principal_account_id
-                )
-                if classified is TransactionKind.TRANSFER:
-                    cashflows.append(
-                        DepositCashflow(transaction.id, transaction.occurred_at, principal_amount)
-                    )
-                elif classified is TransactionKind.INTEREST:
-                    posting_date = transaction.occurred_at.value.astimezone(zone).date()
-                    actual_by_date[posting_date] += principal_amount.amount
+            cashflows = principal_cashflows(terms, transactions)
+            actual_by_date = actual_interest(terms, transactions)
+            evaluation_date = max(terms.opened_on, min(as_of, close_on or terms.matures_on))
             projection = project_deposit(
                 terms,
-                tuple(cashflows),
-                as_of=as_of,
+                cashflows,
+                as_of=evaluation_date,
                 close_on=close_on,
+            )
+            contributed = sum(
+                (
+                    flow.amount.amount
+                    for flow in cashflows
+                    if effective_cashflow_date(terms, flow) < evaluation_date
+                ),
+                start=Decimal(0),
+            )
+            earned = Money.of(projection.current_value.amount - contributed, terms.currency)
+            ledger_balance = Money.of(
+                sum(
+                    (
+                        posting.amount.amount
+                        for transaction in transactions
+                        if transaction.occurred_at.value.astimezone(ZoneInfo(terms.timezone)).date()
+                        <= as_of
+                        for posting in transaction.postings
+                        if posting.account_id == terms.principal_account_id
+                    ),
+                    start=Decimal(0),
+                ),
+                terms.currency,
+            )
+            projection = replace(
+                projection,
+                as_of=as_of,
+                accrued_interest=(
+                    Money.of("0", terms.currency)
+                    if evaluation_date == projection.closes_on
+                    else projection.accrued_interest
+                ),
+                current_value=(
+                    ledger_balance
+                    if evaluation_date == projection.closes_on
+                    else ledger_balance + projection.accrued_interest
+                ),
             )
             planned_by_date = {
                 entry.posting_date: entry.net_interest.amount for entry in projection.schedule
@@ -285,14 +479,47 @@ class DepositService:
                 )
                 for posting_date in sorted(planned_by_date.keys() | actual_by_date.keys())
             )
-            return DepositValuation(projection, rows)
+            return DepositValuation(projection, rows, earned, ledger_balance)
 
     @staticmethod
     def _require_deposit(uow: UnitOfWork, deposit_id: UUID) -> DepositTerms:
         terms = uow.deposits.get(deposit_id)
-        if terms is None:
+        if terms is None or terms.archived:
             raise ResourceNotFoundError("deposit was not found")
         return terms
+
+    @staticmethod
+    def _terms_snapshot(terms: DepositTerms) -> dict[str, object]:
+        return {
+            "name": terms.name,
+            "opened_on": terms.opened_on.isoformat(),
+            "matures_on": terms.matures_on.isoformat(),
+            "rates": [
+                {
+                    "starts_on": period.starts_on.isoformat(),
+                    "ends_on": period.ends_on.isoformat(),
+                    "nominal_rate": format(period.nominal_rate.value, "f"),
+                }
+                for period in terms.rate_periods
+            ],
+            "capitalization_frequency": terms.capitalization_frequency.value,
+            "day_count_convention": terms.day_count_convention.value,
+            "rounding_policy": terms.rounding_policy.value,
+            "interest_rounding_frequency": terms.interest_rounding_frequency.value,
+            "timezone": terms.timezone,
+            "cashflow_cutoff_time": terms.cashflow_cutoff_time.isoformat(),
+            "cashflow_cutoff_inclusive": terms.cashflow_cutoff_inclusive,
+            "early_close_policy": terms.early_close_rule.policy.value,
+            "early_close_rate": (
+                None
+                if terms.early_close_rule.nominal_rate is None
+                else str(terms.early_close_rule.nominal_rate.value)
+            ),
+            "tax_rate": format(terms.tax_rate.value, "f"),
+            "archived": terms.archived,
+            "version": terms.version,
+            "automatic_interest": terms.automatic_interest,
+        }
 
     @staticmethod
     def _lock_and_replay(uow: UnitOfWork, scope: str, key: str, request_hash: str) -> UUID | None:
@@ -339,6 +566,16 @@ class DepositService:
             "transaction",
             transaction.id,
         )
+        if transaction.kind.value != "interest" and transaction.deposit_id is not None:
+            terms = self._require_deposit(uow, transaction.deposit_id)
+            reconcile_interest(
+                uow,
+                terms,
+                now=self._clock(),
+                actor_id=actor_id,
+                uuid_factory=self._uuid_factory,
+                request_id=request_id,
+            )
         uow.commit()
 
     def _remember(

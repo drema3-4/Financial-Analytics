@@ -50,7 +50,7 @@ def _make_app(engine: Engine, owners: dict[str, UUID]) -> object:
         scheduling_service=SchedulingService(
             PostgresSchedulingRepository(engine), clock=lambda: Instant(NOW)
         ),
-        deposit_service=DepositService(factory),
+        deposit_service=DepositService(factory, clock=lambda: Instant(NOW)),
         forecast_service=ForecastService(factory, clock=lambda: Instant(NOW)),
     )
 
@@ -83,19 +83,12 @@ def test_forecast_scenarios_goals_deposits_and_tenant_isolation(
             "/api/v1/accounts",
             {
                 "name": "Forecast savings",
-                "kind": "savings",
+                "kind": "bank",
                 "currency": "RUB",
                 "opening_balance": {"amount": "1000.00", "currency": "RUB"},
                 "opening_balance_occurred_at": "2025-09-01T09:00:00+04:00",
             },
             "forecast-bank",
-        )
-        deposit_account = _post(
-            client,
-            owner_id,
-            "/api/v1/accounts",
-            {"name": "Forecast deposit", "kind": "deposit", "currency": "RUB"},
-            "forecast-deposit-account",
         )
         category = _post(
             client,
@@ -159,7 +152,8 @@ def test_forecast_scenarios_goals_deposits_and_tenant_isolation(
             owner_id,
             "/api/v1/deposits",
             {
-                "principal_account_id": deposit_account["id"],
+                "name": "Forecast deposit",
+                "opening_balance": {"amount": "100.00", "currency": "RUB"},
                 "currency": "RUB",
                 "opened_on": "2026-01-01",
                 "matures_on": "2026-03-31",
@@ -182,18 +176,7 @@ def test_forecast_scenarios_goals_deposits_and_tenant_isolation(
             },
             "forecast-deposit",
         )
-        _post(
-            client,
-            owner_id,
-            f"/api/v1/deposits/{deposit['id']}/cashflows",
-            {
-                "counterparty_account_id": bank["id"],
-                "money": {"amount": "100.00", "currency": "RUB"},
-                "occurred_at": "2026-01-01T09:00:00+00:00",
-                "description": "Forecast deposit funding",
-            },
-            "forecast-deposit-funding",
-        )
+        assert deposit["name"] == "Forecast deposit"
 
         scenario_payload: dict[str, object] = {
             "name": "Higher income",
