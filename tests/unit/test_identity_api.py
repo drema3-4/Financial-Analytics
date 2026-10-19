@@ -166,6 +166,36 @@ def test_identity_input_validation_never_echoes_password() -> None:
         assert password not in invalid.text
 
 
+def test_default_local_cors_allows_both_loopback_names_and_rejects_other_origins() -> None:
+    settings = Settings(app_env=AppEnvironment.TEST, _env_file=None)
+    with TestClient(create_app(settings)) as client:
+        for origin in ("http://localhost:4173", "http://127.0.0.1:4173"):
+            profile = client.get("/api/v1/profile", headers={"Origin": origin})
+            assert profile.status_code == 401
+            assert profile.headers["access-control-allow-origin"] == origin
+            assert profile.headers["access-control-allow-credentials"] == "true"
+
+            preflight = client.options(
+                "/api/v1/auth/bootstrap",
+                headers={
+                    "Origin": origin,
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "Content-Type,X-CSRF-Token",
+                },
+            )
+            assert preflight.status_code == 200
+            assert preflight.headers["access-control-allow-origin"] == origin
+            assert preflight.headers["access-control-allow-credentials"] == "true"
+
+        for origin in ("http://evil.example", "http://127.0.0.1:9999"):
+            denied = client.options(
+                "/api/v1/auth/bootstrap",
+                headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
+            )
+            assert denied.status_code == 400
+            assert "access-control-allow-origin" not in denied.headers
+
+
 def test_master_manages_allowlist_and_password_reset_is_non_disclosing() -> None:
     with make_client() as client:
         assert client.get("/api/v1/admin/allowlist").status_code == 401

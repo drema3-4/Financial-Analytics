@@ -42,6 +42,13 @@ placeholder.
 - readiness: <http://localhost:8000/health/ready>;
 - Prometheus metrics: <http://localhost:8000/metrics>.
 
+Также можно открыть <http://127.0.0.1:4173/start>. Без `VITE_API_BASE_URL` фронтенд использует
+тот же hostname для API на порту `8000`; оба локальных web-origin разрешены в CORS. Это
+сохраняет доступность Strict session/CSRF cookies. Выберите один адрес для постоянной работы:
+cookies `localhost` и `127.0.0.1` раздельны. Явный `VITE_API_BASE_URL` задаётся при сборке web;
+при его настройке hostname API и web должен совпадать для локальных cookie sessions.
+`CORS_ORIGINS` переопределяет точный список origins; production требует явные HTTPS-адреса.
+
 Первый мастер создаётся один раз через `POST /api/v1/auth/bootstrap`; в production email обязан
 совпасть с `BOOTSTRAP_MASTER_EMAIL`. Контракт доступен в
 `/docs`. Задайте email, пароль длиной от 12 символов, базовую валюту, locale и IANA timezone.

@@ -67,7 +67,9 @@ class Settings(BaseSettings):
         alias="DATABASE_URL",
         repr=False,
     )
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:4173"])
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:4173", "http://127.0.0.1:4173"]
+    )
     session_secret_value: SecretStr = Field(
         default=SecretStr(DEFAULT_DEVELOPMENT_SESSION_SECRET),
         alias="SESSION_SECRET",

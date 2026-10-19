@@ -44,6 +44,12 @@ refresh `fa_refresh` имеют `HttpOnly; Secure; SameSite=Strict`; `fa_csrf` �
 `base_currency`, `locale`, `timezone`, `status`, `is_master`, `is_admin`, `email_verified`,
 `created_at`.
 
+Local development CORS defaults to the exact origins `http://localhost:4173` and
+`http://127.0.0.1:4173`, with credentials allowed. Without a build-time `VITE_API_BASE_URL`,
+the browser gateway uses the page's loopback hostname on API port `8000`, so Strict session
+cookies and the readable CSRF cookie stay on the same host. Explicit API URLs are preserved;
+production still requires configured HTTPS origins. Endpoint schemas are unchanged.
+
 Expected security errors: `bootstrap_closed` (`409`), `invalid_credentials`/`invalid_session`
 (`401`), `csrf_validation_failed`/`user_disabled` (`403`) и `rate_limit_exceeded` (`429` с
 `Retry-After`). Ответ не различает неизвестный email и неверный пароль.

@@ -51,7 +51,12 @@ import {
   type UpdateGoalRequest,
 } from "@financial-analytics/api-contracts";
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+export function resolveApiBaseUrl(configuredUrl: string | undefined, hostname: string): string {
+  if (configuredUrl) return configuredUrl;
+  return hostname === "127.0.0.1" ? "http://127.0.0.1:8000" : "http://localhost:8000";
+}
+
+const apiBaseUrl = resolveApiBaseUrl(import.meta.env.VITE_API_BASE_URL, window.location.hostname);
 const csrfCookieName = "fa_csrf";
 
 export type SessionSnapshot =

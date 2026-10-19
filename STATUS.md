@@ -5,6 +5,7 @@
 ## Текущее состояние
 
 - Стадия: завершён корректирующий `14 — Core finance workflows` по пользовательским замечаниям.
+- Дополнительно исправлен локальный запуск через `127.0.0.1` (CORS и hostname cookie sessions).
 - Реализация: отдельные счета/вклады, единый журнал, inline-категории, полные исправления операций,
   CRUD счетов/вкладов/целей, автоматическая капитализация, рабочие диапазоны аналитики.
 - Версия: предложение `0.2.0`, tag proposal `v0.2.0`; tag/push/external deploy не выполнялись.
@@ -15,6 +16,28 @@
 - LLM не входит в core startup. Compose profile `local-llm` и `Qwen/Qwen3-4B-AWQ` **tested**
   на RTX 3050 6 ГБ: context 2048, одна sequence, GPU reserve `0.80`, non-thinking smoke,
   VRAM/latency и полный strict-schema adapter round-trip подтверждены; детали в `docs/LLM.md`.
+
+## Исправление локального запуска — 2026-10-19
+
+- В Chrome воспроизведена ошибка `/start`: web на `127.0.0.1:4173` запрашивал API на
+  `localhost:8000`, а CORS разрешал только `localhost:4173`. Контейнеры и БД были исправны.
+- Без явного `VITE_API_BASE_URL` gateway выбирает API с тем же loopback hostname, что и web;
+  Compose и Settings разрешают ровно два локальных origins. Это также сохраняет доступность
+  `SameSite=Strict` session и CSRF cookies. Явный build-time API URL сохраняется, production
+  по-прежнему требует настроенные HTTPS origins. Схема API и миграции не менялись.
+- Добавлены регрессионные проверки выбора URL и credentialed CORS GET/preflight для обоих
+  адресов, включая отказ постороннему origin и другому порту.
+- Backend: **137 passed**, coverage **86.80%** (`73.41 s`), на отдельном PostgreSQL 18.6.
+  Frontend: **55 passed**, coverage statements **89.20%**, branches **80.46%**, functions
+  **85.58%**, lines **89.81%**. Poetry lock, Ruff, strict mypy, API/client drift, TypeScript,
+  ESLint, Prettier и production build зелёные.
+- Системные E2E: **8 passed** (`1.0 m`) с реальными API/PostgreSQL и пересобранным web image;
+  responsive/error browser suite: **13 passed**, восемь system tests skipped в mock-only suite.
+  Core пересобран; Alembic head `20261017_0012`, metadata drift отсутствует.
+- Дополнительно Chrome на обоих адресах прошёл создание master → создание счёта с CSRF →
+  reload → выход → повторный вход. Проверены реальные `Secure; SameSite=Strict` cookies
+  без `addCookies`/подмены времени. Только disposable `*_e2e` БД; обычный core API возвращён
+  в контейнер, все четыре сервиса healthy. Пользовательская БД не сбрасывалась.
 
 ## Готово в этапе 14
 

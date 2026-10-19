@@ -5,7 +5,13 @@ import {
 } from "@financial-analytics/api-contracts";
 import { describe, expect, it, vi } from "vitest";
 
-import { apiErrorMessage, BrowserFinanceApi, readCookie, SessionExpiredError } from "./api";
+import {
+  apiErrorMessage,
+  BrowserFinanceApi,
+  readCookie,
+  resolveApiBaseUrl,
+  SessionExpiredError,
+} from "./api";
 
 const profile = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -29,6 +35,19 @@ const account = {
   archived: false,
   version: 1,
 };
+
+describe("local API address", () => {
+  it.each([undefined, ""])("keeps session cookies on the page hostname with config %s", (url) => {
+    expect(resolveApiBaseUrl(url, "localhost")).toBe("http://localhost:8000");
+    expect(resolveApiBaseUrl(url, "127.0.0.1")).toBe("http://127.0.0.1:8000");
+  });
+
+  it("preserves an explicitly configured API endpoint", () => {
+    expect(resolveApiBaseUrl("https://api.example.test", "127.0.0.1")).toBe(
+      "https://api.example.test",
+    );
+  });
+});
 
 describe("BrowserFinanceApi", () => {
   it("bootstraps an existing session through the generated client", async () => {

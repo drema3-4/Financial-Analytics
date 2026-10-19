@@ -10,7 +10,7 @@ COPY apps/web ./apps/web
 COPY packages/frontend/api ./packages/frontend/api
 RUN pnpm install --frozen-lockfile
 
-ARG VITE_API_BASE_URL=http://localhost:8000
+ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 RUN pnpm --filter @financial-analytics/web build
 
