@@ -8,7 +8,7 @@ from datetime import datetime
 from types import TracebackType
 from uuid import UUID, uuid4
 
-from sqlalchemy import Select, delete, exists, func, or_, select, tuple_, update
+from sqlalchemy import Select, delete, exists, func, or_, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -186,13 +186,9 @@ class PostgresLedgerRepository:
                     AccountModel.kind,
                     AccountModel.currency,
                 ],
-                index_where=AccountModel.kind.in_(
-                    (
-                        AccountKind.SYSTEM_INCOME.value,
-                        AccountKind.SYSTEM_EXPENSE.value,
-                        AccountKind.SYSTEM_EQUITY.value,
-                    )
-                ),
+                # A generic prepared plan cannot infer a partial index from bind parameters.
+                # Keep this trusted predicate identical to the existing unique index.
+                index_where=text("kind IN ('system_income', 'system_expense', 'system_equity')"),
             )
             .returning(AccountModel.id)
         )

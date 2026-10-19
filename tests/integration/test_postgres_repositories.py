@@ -6,7 +6,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import Engine, func, select, update
+from sqlalchemy import Engine, create_engine, func, select, update
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
@@ -73,6 +73,40 @@ def test_repository_api_is_owner_scoped(postgres_engine: Engine) -> None:
         assert set(uow.ledger.rebuild_balances()) == {first.id}
         with pytest.raises(OwnershipError):
             uow.ledger.save_account(replace(second, name="Cross-tenant write"))
+
+
+def test_system_account_upsert_with_prepared_generic_plans(postgres_engine: Engine) -> None:
+    owners = (_create_owner(postgres_engine), _create_owner(postgres_engine))
+    engine = create_engine(
+        postgres_engine.url,
+        connect_args={"prepare_threshold": 0, "options": "-c plan_cache_mode=force_generic_plan"},
+    )
+    factory = PostgresUnitOfWorkFactory(engine)
+    accounts: dict[tuple[UUID, AccountKind], Account] = {}
+    try:
+        for owner in owners:
+            for kind in (
+                AccountKind.SYSTEM_INCOME,
+                AccountKind.SYSTEM_EXPENSE,
+                AccountKind.SYSTEM_EQUITY,
+            ):
+                with factory.open(owner) as uow:
+                    account, created = uow.ledger.get_or_create_system_account(kind, RUB)
+                    assert created is True
+                    accounts[(owner, kind)] = account
+                    uow.commit()
+                for _ in range(12):
+                    with factory.open(owner) as uow:
+                        replay, created = uow.ledger.get_or_create_system_account(kind, RUB)
+                        assert replay == account
+                        assert created is False
+                        uow.commit()
+        with factory.open(owners[0]) as uow:
+            for kind in (AccountKind.SYSTEM_INCOME, AccountKind.SYSTEM_EXPENSE):
+                assert accounts[(owners[0], kind)].id != accounts[(owners[1], kind)].id
+                assert uow.ledger.get_account(accounts[(owners[1], kind)].id) is None
+    finally:
+        engine.dispose()
 
 
 def test_database_rejects_unbalanced_posted_transaction(postgres_engine: Engine) -> None:

@@ -5,6 +5,9 @@ FastAPI публикует актуальную OpenAPI-схему по `/openap
 детерминированно строится TypeScript fetch-client в
 `packages/frontend/api/src/generated/client.ts`.
 
+Отдельный [демонстрационный стенд](DEMO.md) использует этот же контракт на loopback-порту
+`8002` и собственную БД. Наполнение и советы не требуют новых endpoint или обхода auth/CSRF.
+
 ## Operational endpoints
 
 - `GET /health/live` proves only that the API process can serve a request.

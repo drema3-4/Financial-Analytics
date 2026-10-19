@@ -17,6 +17,36 @@
   на RTX 3050 6 ГБ: context 2048, одна sequence, GPU reserve `0.80`, non-thinking smoke,
   VRAM/latency и полный strict-schema adapter round-trip подтверждены; детали в `docs/LLM.md`.
 
+## Демонстрационный стенд — 2026-10-19
+
+- Подготовлен отдельный `financial-analytics-demo` с собственным PostgreSQL volume, случайными
+  независимыми secrets и вымышленным master-аккаунтом. Loopback web/API/vLLM:
+  `4174`/`8002`/`8003`. Конфигурация — `compose.demo.yaml`, инструкция — `docs/DEMO.md`.
+- `scripts/seed_demo.py` регистрирует demo через штатный bootstrap, затем использует API,
+  CSRF и idempotency. История за апрель–октябрь: **176 операций**, 4 обычных счёта, 2 вклада,
+  15 категорий, 4 группы, 9 регулярных правил, 5 целей и 6 сценариев. Фиксированные исторические
+  операции проводит настоящий worker; они не удваиваются в irregular baseline.
+- Повторный полный seed сохранил fingerprint журнала. Сравнение всех сценариев и три реальных
+  запроса советника также сохранили каждую запись/posting; unbalanced transactions — **0**,
+  recurring jobs — **61 succeeded**, dead-letter нет. Основная БД сохранила исходные количества:
+  1 user, 10 transactions, 20 postings и 29 audit events. Основной stack оставлен остановленным.
+- Массовое наполнение выявило ошибку partial unique-index inference после перехода psycopg
+  prepared statement на generic plan. `ON CONFLICT` использует тот же статический predicate,
+  что индекс, сохраняя bind parameters для owner/kind/currency. Регрессия воспроизводит прежний
+  отказ с `prepare_threshold=0`/`force_generic_plan`, затем проверяет reuse и изоляцию tenants.
+- Backend: **138 passed**, coverage **86.83%**, `78.29 s`; Poetry lock, Ruff lint/format,
+  strict mypy и OpenAPI/client drift зелёные. Schema contract не менялся, Alembic head
+  `20261017_0012`, metadata drift отсутствует. Demo backend/web собраны из закреплённых images;
+  Compose core/demo и YAML format проходят проверки.
+- Локальная Qwen3-4B-AWQ с context **4096**, одной sequence и non-thinking вернула `available`
+  для всех пяти целей: базовые приоритеты **87.00 s**, экономия **66.20 s**, стресс **119.58 s**.
+  JSON schema/evidence validation зелёные; timeout 120 s, retries 0. Финансовые расчёты остаются
+  детерминированными. Снимки ответов, сравнение и маршрут показа — ignored `generated-reports/demo/`.
+- Во встроенном браузере подтверждены обычный вход, пять целей с планом, сравнение экономии,
+  роста доходов и стресса, а также успешный живой ответ советника с evidence и без console errors.
+  Три вкладки оставлены для показа. Все пять demo services healthy. ADR-025 фиксирует
+  изоляцию и эксплуатационный scope; новых продуктовых endpoint или миграций нет.
+
 ## Исправление локального запуска — 2026-10-19
 
 - В Chrome воспроизведена ошибка `/start`: web на `127.0.0.1:4173` запрашивал API на
