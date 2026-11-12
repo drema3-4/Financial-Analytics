@@ -11,6 +11,8 @@ __pycache__/
 *.py[cod]
 .mypy_cache/
 .pytest_cache/
+.pytest-*/
+.hypothesis/
 .ruff_cache/
 .venv/
 htmlcov/
@@ -40,6 +42,8 @@ models/
 *.onnx
 *.safetensors
 generated-reports/
+/output/
+/Демо/
 
 # IDE and operating system files
 .idea/

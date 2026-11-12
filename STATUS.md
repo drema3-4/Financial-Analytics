@@ -1,6 +1,6 @@
 # Статус проекта
 
-Обновлено: 2026-10-19
+Обновлено: 2026-11-12
 
 ## Текущее состояние
 
@@ -16,6 +16,18 @@
 - LLM не входит в core startup. Compose profile `local-llm` и `Qwen/Qwen3-4B-AWQ` **tested**
   на RTX 3050 6 ГБ: context 2048, одна sequence, GPU reserve `0.80`, non-thinking smoke,
   VRAM/latency и полный strict-schema adapter round-trip подтверждены; детали в `docs/LLM.md`.
+
+## Подготовка к публикации на GitHub — 2026-11-12
+
+- В README описаны установка одной строкой для Bash и PowerShell, первый запуск и публикация
+  ветки `main`. `OWNER/REPO` заменяется адресом созданного репозитория. ADR-026 фиксирует выбор
+  существующего профиля Compose `core` для локальной установки.
+- Git и Docker исключают локальные отчёты, демонстрационные материалы и кэши. Проверены правила
+  игнорирования `.env` и `.env.demo` и отсутствие этих файлов в истории `main`.
+- На Windows с Docker Desktop проверен запуск из отдельного локального Git-клона с пустым томом
+  PostgreSQL. API, web и worker прошли healthchecks, Alembic применил `20261017_0012 (head)`.
+  `/start` вернул HTTP 200, `scripts/release_smoke.py` прошёл регистрацию, операцию, прогноз и
+  цель. Снимок OpenAPI и сгенерированный TypeScript-клиент прошли сверку.
 
 ## Демонстрационный стенд — 2026-10-19
 

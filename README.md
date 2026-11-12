@@ -19,12 +19,32 @@ Generated TypeScript client построен поверх double-entry domain co
 Счета, вклады, цели и операции имеют изменение/удаление с сохранением финансовой истории.
 Описание приёмки и миграции старых вкладов: [docs/CORE_FINANCE_ACCEPTANCE.md](docs/CORE_FINANCE_ACCEPTANCE.md).
 
-## Быстрый запуск core stack
+## Установка из GitHub одной командой
 
-Нужны Docker Engine / Docker Desktop с Compose v2. На Windows должен использоваться Docker
-Desktop с WSL2 backend и Linux containers.
+Нужны Git и запущенный Docker Engine или Docker Desktop с Compose v2. На Windows используйте
+Docker Desktop с WSL2 и Linux-контейнерами. Замените `OWNER/REPO` на владельца и имя
+опубликованного репозитория и выполните команду в папке, где хотите скачать проект.
 
-Из корня репозитория на Windows PowerShell, в WSL2 или Linux выполните одну команду:
+Bash (Linux, WSL, macOS, Git Bash) или PowerShell 7 и новее:
+
+```sh
+git clone https://github.com/OWNER/REPO.git financial-analytics && docker compose -f financial-analytics/compose.yaml --profile core up --build --wait
+```
+
+Windows PowerShell 5.1:
+
+```powershell
+git clone https://github.com/OWNER/REPO.git financial-analytics; if ($LASTEXITCODE -eq 0) { docker compose -f financial-analytics/compose.yaml --profile core up --build --wait }
+```
+
+После запуска откройте <http://localhost:4173/start> и создайте первую учётную запись.
+Для первого запуска Docker скачивает образы и зависимости. Порты `4173` и `8000` должны быть
+свободны. Если клонирование прошло, а запуск прервался, откройте папку `financial-analytics`
+и повторите команду запуска из следующего раздела.
+
+## Запуск из существующего клона
+
+Из корня репозитория выполните:
 
 ```text
 docker compose --profile core up --build --wait
@@ -95,6 +115,19 @@ docker compose --profile core down
 Удаление volume выполняется только осознанно командой
 `docker compose --profile core down --volumes`: она
 безвозвратно удаляет локальную БД.
+
+## Публикация репозитория на GitHub
+
+Создайте пустой репозиторий в своём аккаунте GitHub. Выберите `Public`, если проект должен
+скачиваться без приглашения. В корне локального репозитория привяжите его URL и отправьте `main`.
+
+```sh
+git remote add origin https://github.com/OWNER/REPO.git
+git push -u origin main
+```
+
+Укажите тот же `OWNER/REPO` в команде, которой будете делиться. Шаги аутентификации описаны
+в [инструкции GitHub](https://docs.github.com/en/migrations/importing-source-code/using-the-command-line-to-import-source-code/adding-locally-hosted-code-to-github).
 
 ## Закреплённый toolchain
 
